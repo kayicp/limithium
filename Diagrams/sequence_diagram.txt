@@ -1,0 +1,63 @@
+sequenceDiagram
+    participant U as User
+    participant T as ICRC-2 Token
+    participant A as Wallet Canister
+
+    U->>+T: icrc2_approve<br>(wallet_canister) 
+    T-->>-U: Ok: block_id
+    U->>+A: deposit(tokens)
+    A->>+T: icrc2_transfer_from<br>(user to wallet_canister)
+    T-->>-A: Ok: block_id
+    A-->A: Increase token balance 
+    A-->>-U: Ok: block id
+
+sequenceDiagram
+    participant U as User
+    participant T as ICRC-2 Token
+    participant A as Wallet Canister
+
+    U->>+A: withdraw(tokens)
+    A-->A: - Verify if unlocked<br>balance is sufficient<br>- Lock balance for withdrawal
+    A->>+T: icrc1_transfer<br>(wallet_canister to user)
+    T-->>-A: Ok: block_id
+    A-->A: - Release withdrawal lock<br>- Decrease unlocked balance 
+    A-->>-U: Ok: block id
+
+sequenceDiagram
+    participant U as User
+    participant B as Orderbook Canister
+    participant A as Wallet Canister
+
+    U->>+B: place(orders)
+    B-->>B: Validity check on orders<br>(price, amount, expires_at)
+    B->>+A: lock(user, token)
+    A-->>A: - Check if unlocked<br>balance is sufficient<br>- Decrease unlocked balance<br>-Increase locked balance
+    A-->>-B: Ok
+    B-->>B: Insert orders
+    B-->>-U: Ok: [order_id]
+
+sequenceDiagram
+    participant U as User
+    participant B as Orderbook Canister
+    participant A as Wallet Canister
+
+    U->>+B: cancel(order_ids)
+    B-->>B: Validity check on order_ids<br>(if exist, owned by user, <br>is locked for trading, etc.)
+    B->>+A: unlock(user, token)
+    A-->>A: - Check if locked<br>balance is sufficient<br>- Decrease locked balance<br>-Increase unlocked balance
+    A-->>-B: Ok
+    B-->>B: Remove orders
+    B-->>-U: Ok
+
+sequenceDiagram
+    participant U as User
+    participant B as Orderbook Canister
+    participant A as Wallet Canister
+
+    U->>+B: run()
+    B-->>B: - Match overlapping unlocked orders<br>- Lock matched orders
+    B->>+A: swap(sell_order, buy_order)
+    A-->>A: - Atomic swap between traders<br>- Decrease locked balance<br>- Increase unlocked balance
+    A-->>-B: Ok
+    B-->>B: - Unlock matched orders<br>- Remove from orderbook if filled<br>- Log trade under each order
+    B-->>-U: Ok

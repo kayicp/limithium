@@ -1,0 +1,37 @@
+{
+  "canisters": {
+    "internet_identity": {
+      "candid": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity.did",
+      "frontend": {},
+      "remote": {
+        "id": {
+          "ic": "rdmx6-jaaaa-aaaaa-aaadq-cai"
+        }
+      },
+      "type": "custom",
+      "wasm": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity_dev.wasm.gz"
+    },
+    "limithium_backend": {
+      "main": "src/limithium_backend/main.mo",
+      "type": "motoko"
+    },
+    "limithium_frontend": {
+      "dependencies": [
+        "limithium_backend"
+      ],
+      "source": [
+        "src/limithium_frontend/dist"
+      ],
+      "type": "assets",
+      "workspace": "limithium_frontend"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}
