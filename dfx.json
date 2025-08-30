@@ -11,25 +11,25 @@
       "type": "custom",
       "wasm": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity_dev.wasm.gz"
     },
-    "limithium_backend": {
-      "main": "src/limithium_backend/main.mo",
+    "wallet_canister": {
+      "main": "src/wallet_canister/main.mo",
       "type": "motoko"
     },
-    "limithium_frontend": {
+    "frontend_canister": {
       "dependencies": [
-        "limithium_backend"
+        "wallet_canister"
       ],
       "source": [
-        "src/limithium_frontend/dist"
+        "src/frontend_canister/dist"
       ],
       "type": "assets",
-      "workspace": "limithium_frontend"
+      "workspace": "frontend_canister"
     }
   },
   "defaults": {
     "build": {
       "args": "",
-      "packtool": ""
+      "packtool": "mops sources"
     }
   },
   "output_env_file": ".env",

@@ -1,0 +1,25 @@
+Limithium will consists of 2 types of canisters:
+(A) Centralized Multi-Token Balance (aka Wallet) Canister:
+- maintains the map of users' deposited balance across multiple tokens.
+- `deposit(token, amount): Ok(block_id)/Err` and `withdraw(token, amount): Ok(block_id)/Err` to track internal balances.
+- `lock(user, token, amount) : Ok/Err`, only callable by (B)'s `place(orders)`, to prevent balance from being withdrawn.
+- `unlock(user, token, amount) : Ok/Err`, only callable by (B)'s `cancel(order_ids)`, to enable withdrawal on the balance.
+- `swap(sell_order, buy_order): Ok/Err`, only callable by (B)'s `run()` to atomically update both traders' internal token balance, due to ICP asynchronous nature.
+- some query endpoints: `balance(user, token, is_locked) : Nat`, etc. 
+
+(B) Trading Pair Price-Time Priority Orderbook Canister
+- maintains the map of users' sell orders.
+- maintains the map of users' buy orders.
+- maintains the orderbook settings (amount tick, price tick, minimum order amount, maximum order expiry, etc.)
+- `place(orders: [Order]) : Ok[order_id]/Err` to place new orders, which will call (A)'s `lock` to reserve the balance for the new orders.
+- `cancel([orders_id]) : Ok/Err` to remove orders, which will call (A)'s `unlock` to unreserve the unfilled balance from the to-be-cancel orders. 
+- `run() : ()` to match overlapping sell orders and buy orders, lock them to prevent from being matched twice, then call (A)'s `swap` to fill the orders.
+- some query endpoints: `sell_orders(prev, take) : [order id]`, `amount_of([order_id]) : [amount]`, `price_of([order_id]) : [price]`, etc.
+
+(C) Frontend Canister
+- allow login via Internet Identity
+- pair selector (only ckBTC/ICP for now)
+- a very simple/minimal orderbook view
+- order placement form (price, amount in ckBTC, amount in ICP)
+- open orders (for cancellation)
+- deposit form, withdraw form (token, amount)

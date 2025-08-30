@@ -1,5 +1,5 @@
 import { html, render } from 'lit-html';
-import { limithium_backend } from 'declarations/limithium_backend';
+import { wallet_canister } from 'declarations/wallet_canister';
 import logo from './logo2.svg';
 
 class App {
@@ -12,7 +12,7 @@ class App {
   #handleSubmit = async (e) => {
     e.preventDefault();
     const name = document.getElementById('name').value;
-    this.greeting = await limithium_backend.greet(name);
+    this.greeting = await wallet_canister.greet(name);
     this.#render();
   };
 
