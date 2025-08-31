@@ -24,5 +24,6 @@ dist/
 # environment variables
 .env
 
+package-lock.json
 src/util/motoko
 .mops
