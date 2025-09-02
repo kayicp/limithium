@@ -2,6 +2,7 @@ import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Order "mo:base/Order";
+import ICRCToken "../util/motoko/ICRC-1/Types";
 
 module {
 
@@ -27,8 +28,8 @@ module {
     #InsufficientAllowance : { allowance : Nat };
     #CreatedInFuture : { ledger_time : Nat64 };
     #TooOld;
-    #InsufficientFunds : { balance : Nat };
     #Duplicate : { duplicate_of : Nat };
+    #TransferFailed : ICRCToken.TransferFromError;
   };
   public type DepositRes = Result.Type<Nat, DepositErr>;
 
@@ -44,24 +45,19 @@ module {
   public type WithdrawRes = Result.Type<Nat, WithdrawErr>;
 
   public type IDs = RBTree.Type<Nat, ()>;
-  public type Token = {
-    #ICRC2 : Principal;
-    // #BTC
-    // #ETH
-  };
-
   public type SubaccountMap = {
-    subaccount_id : Nat;
+    id : Nat;
     owners : IDs;
   };
   public type Balance = {
-    available : Nat;
+    unlocked : Nat;
     locked : Nat;
   };
   public type Subaccount = {
-    balances : RBTree.Type<Nat, Balance>;
+    icrc2s : RBTree.Type<Nat, Balance>;
   };
   public type User = {
+    id : Nat;
     last_activity : Nat64; // for trimming
     subaccounts : RBTree.Type<Nat, Subaccount>;
   };
@@ -71,6 +67,7 @@ module {
 
   public type GenericRes = Result.Type<(), Error.Generic>;
   public type ICRCToken = {
+    id : Nat;
     min_deposit : Nat;
     deposit_fee : Nat;
     withdrawal_fee : Nat;

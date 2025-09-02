@@ -8,6 +8,8 @@ import Array "mo:base/Array";
 import Text "mo:base/Text";
 import Principal "mo:base/Principal";
 import Nat64 "mo:base/Nat64";
+import Blob "mo:base/Blob";
+import Nat "mo:base/Nat";
 import Time64 "../util/motoko/Time64";
 import Wallet "Wallet";
 
@@ -26,22 +28,23 @@ shared (install) persistent actor class Canister(
   var subaccount_maps = RBTree.empty<Blob, W.SubaccountMap>();
   var subaccount_ids = RBTree.empty<Nat, Blob>();
 
+  var icrc2s = RBTree.empty<Principal, W.ICRCToken>();
+  var icrc2_ids = RBTree.empty<Nat, Principal>();
+
   var deposit_icrc2_dedupes : W.ICRCDedupes = RBTree.empty();
   var withdraw_icrc1_dedupes : W.ICRCDedupes = RBTree.empty();
-
-  var icrc2s = RBTree.empty<Principal, W.ICRCToken>();
 
   public shared ({ caller }) func wallet_deposit_icrc2(arg : W.ICRCTokenArg) : async W.DepositRes {
     let user_acct = { owner = caller; subaccount = arg.subaccount };
     if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
 
-    let (token, token_config) = switch (RBTree.get(icrc2s, Principal.compare, arg.token)) {
-      case (?found) (ICRCToken.genActor(arg.token), found);
+    let token = switch (RBTree.get(icrc2s, Principal.compare, arg.token)) {
+      case (?found) ({ found with canister = ICRCToken.genActor(arg.token) });
       case _ return Error.text("Unsupported token");
     };
-    if (arg.amount < token_config.min_deposit) return #Err(#AmountTooLow { minimum_amount = token_config.min_deposit });
+    if (arg.amount < token.min_deposit) return #Err(#AmountTooLow { minimum_amount = token.min_deposit });
     switch (arg.fee) {
-      case (?defined) if (defined != token_config.deposit_fee) return #Err(#BadFee { expected_fee = token_config.deposit_fee });
+      case (?defined) if (defined != token.deposit_fee) return #Err(#BadFee { expected_fee = token.deposit_fee });
       case _ ();
     };
     switch (arg.memo) {
@@ -63,11 +66,11 @@ shared (install) persistent actor class Canister(
       case _ ();
     };
     let self_acct = { owner = Principal.fromActor(Self); subaccount = null };
-    let (fee_res, balance_res, allowance_res) = (token.icrc1_fee(), token.icrc1_balance_of(user_acct), token.icrc2_allowance({ account = user_acct; spender = self_acct }));
+    let (fee_res, balance_res, allowance_res) = (token.canister.icrc1_fee(), token.canister.icrc1_balance_of(user_acct), token.canister.icrc2_allowance({ account = user_acct; spender = self_acct }));
     let (fee, balance, approval) = (await fee_res, await balance_res, await allowance_res);
-    let minimum_balance = arg.amount + fee;
-    if (balance < minimum_balance) return #Err(#InsufficientBalance { balance });
-    if (approval.allowance < minimum_balance) return #Err(#InsufficientAllowance approval);
+    let xfer_amount = arg.amount + token.deposit_fee;
+    if (balance < xfer_amount + fee) return #Err(#InsufficientBalance { balance });
+    if (approval.allowance < xfer_amount) return #Err(#InsufficientAllowance approval);
 
     let now = Time64.nanos();
     var tx_window = Nat64.fromNat(Value.getNat(meta, W.TX_WINDOW, 0));
@@ -95,10 +98,31 @@ shared (install) persistent actor class Canister(
       };
       case _ ();
     };
-
+    let xfer_arg = {
+      from = user_acct;
+      to = self_acct;
+      spender_subaccount = self_acct.subaccount;
+      fee = ?fee;
+      amount = xfer_amount;
+      memo = null;
+      created_at_time = null;
+    };
+    let xfer_id = switch (await token.canister.icrc2_transfer_from(xfer_arg)) {
+      case (#Ok ok) ok;
+      case (#Err err) return #Err(#TransferFailed err);
+    };
     var user = getUser(caller);
     let arg_subaccount = Account.denull(arg.subaccount);
     var subacc = getSubaccount(user, arg_subaccount);
+    var bal = Wallet.getICRCBalance(subacc.data, token.id);
+    bal := { bal with unlocked = bal.unlocked + arg.amount };
+    subacc := {
+      subacc with data = Wallet.saveICRCBalance(subacc.data, token.id, bal)
+    };
+    user := Wallet.saveSubaccount(user, subacc.id, subacc.data);
+    user := saveUser(caller, user);
+
+    // todo: blockify
 
     #Ok 1;
   };
@@ -124,8 +148,24 @@ shared (install) persistent actor class Canister(
       subaccounts = RBTree.empty();
     });
   };
-  func getSubaccount(u : W.User, sub : Blob) {
-    let;
+  func saveUser(p : Principal, u : W.User) : W.User {
+    users := RBTree.insert(users, Principal.compare, p, u);
+    user_ids := RBTree.insert(user_ids, Nat.compare, u.id, p);
+    u;
+  };
+  func getSubaccount(u : W.User, sub : Blob) : { id : Nat; data : W.Subaccount } {
+    var submap = switch (RBTree.get(subaccount_maps, Blob.compare, sub)) {
+      case (?found) found;
+      case _ ({
+        id = Wallet.recycleId(subaccount_ids);
+        owners = RBTree.empty();
+      });
+    };
+    submap := {
+      submap with owners = RBTree.insert(submap.owners, Nat.compare, u.id, ())
+    };
+    subaccount_maps := RBTree.insert(subaccount_maps, Blob.compare, sub, submap); // reserve
+    { submap with data = Wallet.getSubaccount(u, submap.id) };
   };
 
   public shared ({ caller }) func wallet_enlist_icrc2({
@@ -144,8 +184,15 @@ shared (install) persistent actor class Canister(
 
     if (min_deposit <= withdrawal_fee) return Error.text("min_deposit must be larger than withdrawal_fee");
 
-    icrc2s := RBTree.insert(icrc2s, Principal.compare, canister_id, { min_deposit; deposit_fee; withdrawal_fee });
-
+    let config = switch (RBTree.get(icrc2s, Principal.compare, canister_id)) {
+      case (?found) ({ found with min_deposit; deposit_fee; withdrawal_fee });
+      case _ {
+        let id = Wallet.recycleId(icrc2_ids);
+        icrc2_ids := RBTree.insert(icrc2_ids, Nat.compare, id, canister_id);
+        { id; min_deposit; deposit_fee; withdrawal_fee };
+      };
+    };
+    icrc2s := RBTree.insert(icrc2s, Principal.compare, canister_id, config);
     #Ok;
   };
 
