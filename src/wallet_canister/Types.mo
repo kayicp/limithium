@@ -19,7 +19,6 @@ module {
     memo : ?Blob;
     created_at_time : ?Nat64;
   };
-
   public type DepositErr = {
     #GenericError : Error.Type;
     #AmountTooLow : { minimum_amount : Nat };
@@ -41,6 +40,7 @@ module {
     #TooOld;
     #InsufficientFunds : { balance : Nat };
     #Duplicate : { duplicate_of : Nat };
+    #TransferFailed : ICRCToken.TransferError;
   };
   public type WithdrawRes = Result.Type<Nat, WithdrawErr>;
 
@@ -66,6 +66,11 @@ module {
   public func dedupeICRC(a : (Principal, ICRCTokenArg), b : (Principal, ICRCTokenArg)) : Order.Order = #equal; // todo: finish this, start with time;
 
   public type GenericRes = Result.Type<(), Error.Generic>;
+  public type IdempotentRes = Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }>;
+  public type ArgType = {
+    #DepositICRC : ICRCTokenArg;
+    #WithdrawICRC : ICRCTokenArg;
+  };
   public type ICRCToken = {
     id : Nat;
     min_deposit : Nat;

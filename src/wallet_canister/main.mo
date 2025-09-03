@@ -47,22 +47,8 @@ shared (install) persistent actor class Canister(
       case (?defined) if (defined != token.deposit_fee) return #Err(#BadFee { expected_fee = token.deposit_fee });
       case _ ();
     };
-    switch (arg.memo) {
-      case (?defined) {
-        var min_memo_size = Value.getNat(meta, W.MIN_MEMO, 1);
-        if (min_memo_size < 1) {
-          min_memo_size := 1;
-          meta := Value.setNat(meta, W.MIN_MEMO, ?min_memo_size);
-        };
-        if (defined.size() < min_memo_size) return Error.text("Memo size must be larger than " # debug_show min_memo_size);
-
-        var max_memo_size = Value.getNat(meta, W.MAX_MEMO, 1);
-        if (max_memo_size < min_memo_size) {
-          max_memo_size := min_memo_size;
-          meta := Value.setNat(meta, W.MAX_MEMO, ?max_memo_size);
-        };
-        if (defined.size() > max_memo_size) return Error.text("Memo size must be smaller than " # debug_show max_memo_size);
-      };
+    switch (checkMemo(arg.memo)) {
+      case (#Err err) return #Err err;
       case _ ();
     };
     let self_acct = { owner = Principal.fromActor(Self); subaccount = null };
@@ -73,29 +59,8 @@ shared (install) persistent actor class Canister(
     if (approval.allowance < xfer_amount) return #Err(#InsufficientAllowance approval);
 
     let now = Time64.nanos();
-    var tx_window = Nat64.fromNat(Value.getNat(meta, W.TX_WINDOW, 0));
-    let min_tx_window = Time64.MINUTES(15);
-    if (tx_window < min_tx_window) {
-      tx_window := min_tx_window;
-      meta := Value.setNat(meta, W.TX_WINDOW, ?(Nat64.toNat(tx_window)));
-    };
-    var permitted_drift = Nat64.fromNat(Value.getNat(meta, W.PERMITTED_DRIFT, 0));
-    let min_permitted_drift = Time64.SECONDS(5);
-    if (permitted_drift < min_permitted_drift) {
-      permitted_drift := min_permitted_drift;
-      meta := Value.setNat(meta, W.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
-    };
-    switch (arg.created_at_time) {
-      case (?created_time) {
-        let start_time = now - tx_window - permitted_drift;
-        if (created_time < start_time) return #Err(#TooOld);
-        let end_time = now + permitted_drift;
-        if (created_time > end_time) return #Err(#CreatedInFuture { ledger_time = now });
-        switch (RBTree.get(deposit_icrc2_dedupes, W.dedupeICRC, (caller, arg))) {
-          case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
-          case _ ();
-        };
-      };
+    switch (checkIdempotency(caller, #DepositICRC arg, now, arg.created_at_time)) {
+      case (#Err err) return #Err err;
       case _ ();
     };
     let xfer_arg = {
@@ -122,14 +87,94 @@ shared (install) persistent actor class Canister(
     user := Wallet.saveSubaccount(user, subacc.id, subacc.data);
     user := saveUser(caller, user);
 
+    // todo: take fee, but later since fee is zero
     // todo: blockify
-
     #Ok 1;
   };
   // todo: deposit/withdraw icrc1_transfer
   // todo: deposit/withdraw native btc/eth
 
   public shared ({ caller }) func wallet_withdraw_icrc1(arg : W.ICRCTokenArg) : async W.WithdrawRes {
+    let user_acct = { owner = caller; subaccount = arg.subaccount };
+    if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
+
+    let token = switch (RBTree.get(icrc2s, Principal.compare, arg.token)) {
+      case (?found) ({ found with canister = ICRCToken.genActor(arg.token) });
+      case _ return Error.text("Unsupported token");
+    };
+    let xfer_fee = await token.canister.icrc1_fee();
+    if (token.withdrawal_fee <= xfer_fee) return Error.text("Withdrawal fee must be larger than transfer fee");
+
+    var user = getUser(caller);
+    let arg_subaccount = Account.denull(arg.subaccount);
+    var subacc = getSubaccount(user, arg_subaccount);
+    var bal = Wallet.getICRCBalance(subacc.data, token.id);
+    let to_lock = arg.amount + token.withdrawal_fee;
+    if (bal.unlocked < to_lock) return #Err(#InsufficientBalance { balance = bal.unlocked });
+
+    switch (arg.fee) {
+      case (?defined) if (defined != token.withdrawal_fee) return #Err(#BadFee { expected_fee = token.withdrawal_fee });
+      case _ ();
+    };
+    switch (checkMemo(arg.memo)) {
+      case (#Err err) return #Err err;
+      case _ ();
+    };
+    let now = Time64.nanos();
+    switch (checkIdempotency(caller, #WithdrawICRC arg, now, arg.created_at_time)) {
+      case (#Err err) return #Err err;
+      case _ ();
+    };
+    bal := {
+      unlocked = bal.unlocked - to_lock;
+      locked = bal.locked + to_lock;
+    }; // lock to prevent double spending
+    subacc := {
+      subacc with data = Wallet.saveICRCBalance(subacc.data, token.id, bal)
+    };
+    user := Wallet.saveSubaccount(user, subacc.id, subacc.data);
+    user := saveUser(caller, user);
+    let xfer_arg = {
+      amount = arg.amount;
+      to = user_acct;
+      fee = ?xfer_fee;
+      memo = null;
+      from_subaccount = null;
+      created_at_time = null;
+    };
+    let xfer_res = await token.canister.icrc1_transfer(xfer_arg);
+    user := getUser(caller);
+    subacc := getSubaccount(user, arg_subaccount);
+    bal := Wallet.getICRCBalance(subacc.data, token.id);
+    bal := { bal with locked = bal.locked - to_lock }; // release lock
+    switch xfer_res {
+      case (#Err _) bal := { bal with unlocked = bal.unlocked + to_lock }; // recover fund
+      case _ {};
+    };
+    subacc := {
+      subacc with data = Wallet.saveICRCBalance(subacc.data, token.id, bal)
+    };
+    user := Wallet.saveSubaccount(user, subacc.id, subacc.data);
+    user := saveUser(caller, user);
+    let xfer_id = switch xfer_res {
+      case (#Err err) return #Err(#TransferFailed err);
+      case (#Ok ok) ok;
+    };
+
+    let this_canister = Principal.fromActor(Self);
+    let canister_subaccount = Account.denull(null);
+    user := getUser(this_canister); // give fee to canister
+    subacc := getSubaccount(user, canister_subaccount);
+    bal := Wallet.getICRCBalance(subacc.data, token.id);
+    let canister_take = token.withdrawal_fee - xfer_fee;
+    bal := { bal with unlocked = bal.unlocked + canister_take };
+    subacc := {
+      subacc with data = Wallet.saveICRCBalance(subacc.data, token.id, bal)
+    };
+    user := Wallet.saveSubaccount(user, subacc.id, subacc.data);
+    user := saveUser(this_canister, user);
+
+    // todo: blockify
     #Ok 1;
   };
 
@@ -166,6 +211,56 @@ shared (install) persistent actor class Canister(
     };
     subaccount_maps := RBTree.insert(subaccount_maps, Blob.compare, sub, submap); // reserve
     { submap with data = Wallet.getSubaccount(u, submap.id) };
+  };
+  func checkMemo(m : ?Blob) : W.GenericRes = switch m {
+    case (?defined) {
+      var min_memo_size = Value.getNat(meta, W.MIN_MEMO, 1);
+      if (min_memo_size < 1) {
+        min_memo_size := 1;
+        meta := Value.setNat(meta, W.MIN_MEMO, ?min_memo_size);
+      };
+      if (defined.size() < min_memo_size) return Error.text("Memo size must be larger than " # debug_show min_memo_size);
+
+      var max_memo_size = Value.getNat(meta, W.MAX_MEMO, 1);
+      if (max_memo_size < min_memo_size) {
+        max_memo_size := min_memo_size;
+        meta := Value.setNat(meta, W.MAX_MEMO, ?max_memo_size);
+      };
+      if (defined.size() > max_memo_size) return Error.text("Memo size must be smaller than " # debug_show max_memo_size);
+      #Ok;
+    };
+    case _ #Ok;
+  };
+  func checkIdempotency(caller : Principal, opr : W.ArgType, now : Nat64, created_at_time : ?Nat64) : W.IdempotentRes {
+    var tx_window = Nat64.fromNat(Value.getNat(meta, W.TX_WINDOW, 0));
+    let min_tx_window = Time64.MINUTES(15);
+    if (tx_window < min_tx_window) {
+      tx_window := min_tx_window;
+      meta := Value.setNat(meta, W.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+    };
+    var permitted_drift = Nat64.fromNat(Value.getNat(meta, W.PERMITTED_DRIFT, 0));
+    let min_permitted_drift = Time64.SECONDS(5);
+    if (permitted_drift < min_permitted_drift) {
+      permitted_drift := min_permitted_drift;
+      meta := Value.setNat(meta, W.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+    };
+    switch (created_at_time) {
+      case (?created_time) {
+        let start_time = now - tx_window - permitted_drift;
+        if (created_time < start_time) return #Err(#TooOld);
+        let end_time = now + permitted_drift;
+        if (created_time > end_time) return #Err(#CreatedInFuture { ledger_time = now });
+        let (map, comparer, arg) = switch opr {
+          case (#DepositICRC depo) (deposit_icrc2_dedupes, W.dedupeICRC, depo);
+          case (#WithdrawICRC draw) (withdraw_icrc1_dedupes, W.dedupeICRC, draw);
+        };
+        switch (RBTree.get(map, comparer, (caller, arg))) {
+          case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
+          case _ #Ok;
+        };
+      };
+      case _ #Ok;
+    };
   };
 
   public shared ({ caller }) func wallet_enlist_icrc2({
