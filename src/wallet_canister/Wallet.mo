@@ -22,4 +22,17 @@ module {
   public func saveSubaccount(u : W.User, subacc_id : Nat, subacc : W.Subaccount) : W.User = ({
     u with subaccounts = RBTree.insert(u.subaccounts, Nat.compare, subacc_id, subacc)
   });
+  public func incLock(bal : W.Balance, amt : Nat) : W.Balance = {
+    bal with locked = bal.locked + amt
+  };
+  public func decLock(bal : W.Balance, amt : Nat) : W.Balance = {
+    bal with locked = bal.locked - amt
+  };
+  public func incUnlock(bal : W.Balance, amt : Nat) : W.Balance = {
+    bal with unlocked = bal.unlocked + amt
+  };
+  public func decUnlock(bal : W.Balance, amt : Nat) : W.Balance = {
+    bal with unlocked = bal.unlocked - amt
+  };
+
 };

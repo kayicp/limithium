@@ -2,18 +2,19 @@ import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Order "mo:base/Order";
-import ICRCToken "../util/motoko/ICRC-1/Types";
+import ICRC2Token "../util/motoko/ICRC-1/Types";
+import Account "../util/motoko/ICRC-1/Account";
 
 module {
-
+  public let AVAILABLE = "wallet:available";
   public let MIN_MEMO = "wallet:min_memo_size";
   public let MAX_MEMO = "wallet:max_memo_size";
   public let TX_WINDOW = "wallet:tx_window";
   public let PERMITTED_DRIFT = "wallet:permitted_drift";
 
-  public type ICRCTokenArg = {
+  public type ICRC2TokenArg = {
     subaccount : ?Blob;
-    token : Principal;
+    canister_id : Principal;
     amount : Nat;
     fee : ?Nat;
     memo : ?Blob;
@@ -28,7 +29,7 @@ module {
     #CreatedInFuture : { ledger_time : Nat64 };
     #TooOld;
     #Duplicate : { duplicate_of : Nat };
-    #TransferFailed : ICRCToken.TransferFromError;
+    #TransferFailed : ICRC2Token.TransferFromError;
   };
   public type DepositRes = Result.Type<Nat, DepositErr>;
 
@@ -40,7 +41,7 @@ module {
     #TooOld;
     #InsufficientFunds : { balance : Nat };
     #Duplicate : { duplicate_of : Nat };
-    #TransferFailed : ICRCToken.TransferError;
+    #TransferFailed : ICRC2Token.TransferError;
   };
   public type WithdrawRes = Result.Type<Nat, WithdrawErr>;
 
@@ -62,19 +63,41 @@ module {
     subaccounts : RBTree.Type<Nat, Subaccount>;
   };
   public type Users = RBTree.Type<Principal, User>;
-  public type ICRCDedupes = RBTree.Type<(Principal, ICRCTokenArg), Nat>;
-  public func dedupeICRC(a : (Principal, ICRCTokenArg), b : (Principal, ICRCTokenArg)) : Order.Order = #equal; // todo: finish this, start with time;
+  public type ICRCDedupes = RBTree.Type<(Principal, ICRC2TokenArg), Nat>;
+  public func dedupeICRC(a : (Principal, ICRC2TokenArg), b : (Principal, ICRC2TokenArg)) : Order.Order = #equal; // todo: finish this, start with time;
 
   public type GenericRes = Result.Type<(), Error.Generic>;
   public type IdempotentRes = Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }>;
   public type ArgType = {
-    #DepositICRC : ICRCTokenArg;
-    #WithdrawICRC : ICRCTokenArg;
+    #DepositICRC : ICRC2TokenArg;
+    #WithdrawICRC : ICRC2TokenArg;
   };
-  public type ICRCToken = {
+  public type ICRC2Token = {
     id : Nat;
     min_deposit : Nat;
     deposit_fee : Nat;
     withdrawal_fee : Nat;
+  };
+  public type Asset = {
+    #ICRC2 : { canister_id : Principal };
+    // #BTC;
+    // #ETH;
+    // #ERC20 : { contract_address: Text };
+  };
+  public type Action = {
+    #Lock : { amount : Nat };
+    #Unlock : { amount : Nat };
+    #Transfer : { amount : Nat; to : Account.Pair };
+  };
+  public type ExecuteErr = {
+    #GenericError : Error.Type;
+    #UnlistedAsset : { index : Nat };
+    #InsufficientBalance : { index : Nat; balance : Nat };
+  };
+  public type ExecuteRes = Result.Type<Nat, ExecuteErr>;
+  public type Instruction = {
+    account : Account.Pair;
+    asset : Asset;
+    action : Action;
   };
 };
