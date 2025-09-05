@@ -205,10 +205,10 @@ shared (install) persistent actor class Canister(
           });
         };
       };
-      let arg_subacc = Account.denull(acc.subaccount);
-      var subacc_map = switch (RBTree.get(lsubacc_maps, Blob.compare, arg_subacc)) {
+      let subacc = Account.denull(acc.subaccount);
+      var subacc_map = switch (RBTree.get(lsubacc_maps, Blob.compare, subacc)) {
         case (?found) found;
-        case _ switch (RBTree.get(subaccount_maps, Blob.compare, arg_subacc)) {
+        case _ switch (RBTree.get(subaccount_maps, Blob.compare, subacc)) {
           case (?found) found;
           case _ ({
             id = Nat.max(Wallet.recycleId(subaccount_ids), Wallet.recycleId(lsubacc_ids));
@@ -220,57 +220,77 @@ shared (install) persistent actor class Canister(
         subacc_map with owners = RBTree.insert(subacc_map.owners, Nat.compare, user.id, ())
       };
       let subacc_data = Wallet.getSubaccount(user, subacc_map.id);
-      { user; arg_subacc; subacc_map; subacc_data };
+      { acc with user; subacc; subacc_map; subacc_data };
+    };
+    func getAssetKey(asset : W.Asset) : ?W.AssetKey = switch asset {
+      case (#ICRC2 token) switch (getICRC2(token.canister_id)) {
+        case (?(_, { id })) ?#ICRC2 id;
+        case _ null;
+      };
     };
     var a = getAccount(instructions[0].account);
+    var asset_key = switch (getAssetKey(instructions[0].asset)) {
+      case (?found) found;
+      case _ return #Err(#UnlistedAsset { index = 0 });
+    };
+    var b = Wallet.getBalance(asset_key, a.subacc_data);
     func reserve<T>(t : T) : T {
-      // todo: finish this
+      a := {
+        a with subacc_data = Wallet.saveBalance(asset_key, a.subacc_data, b)
+      };
+      lsubacc_maps := RBTree.insert(lsubacc_maps, Blob.compare, a.subacc, a.subacc_map);
+      lsubacc_ids := RBTree.insert(lsubacc_ids, Nat.compare, a.subacc_map.id, a.subacc);
+      a := {
+        a with user = Wallet.saveSubaccount(a.user, a.subacc_map.id, a.subacc_data)
+      };
+      lusers := RBTree.insert(lusers, Principal.compare, a.owner, a.user);
+      luser_ids := RBTree.insert(luser_ids, Nat.compare, a.user.id, a.owner);
       t;
     };
-    func execute(index : Nat) : W.ExecuteRes {
-      let asset_key = switch (instructions[index].asset) {
-        case (#ICRC2 token) switch (getICRC2(token.canister_id)) {
-          case (?(_, { id })) #ICRC2 id;
-          case _ return #Err(#UnlistedAsset { index });
-        };
+    func execute(index : Nat) : W.ExecuteRes = if (instructions[index].amount > 0) switch (instructions[index].action) {
+      case (#Lock) if (b.unlocked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.unlocked }) else {
+        b := Wallet.decUnlock(b, instructions[index].amount);
+        b := Wallet.incLock(b, instructions[index].amount);
+        reserve(#Ok index);
       };
-      var b = Wallet.getBalance(asset_key, a.subacc_data);
-      switch (instructions[index].action) {
-        case (#Lock action) if (b.unlocked < action.amount) return #Err(#InsufficientBalance { index; balance = b.unlocked }) else {
-          b := Wallet.decUnlock(b, action.amount);
-          b := Wallet.incLock(b, action.amount);
-          reserve(#Ok index);
-        };
-        case (#Unlock action) if (b.locked < action.amount) return #Err(#InsufficientBalance { index; balance = b.locked }) else {
-          b := Wallet.decLock(b, action.amount);
-          b := Wallet.incUnlock(b, action.amount);
-          reserve(#Ok index);
-        };
-        case (#Transfer action) {
-          if (b.unlocked < action.amount) return #Err(#InsufficientBalance { index; balance = b.unlocked });
-          if (Account.equal(instructions[index].account, action.to)) return #Err(#InvalidTransfer { index });
-          b := Wallet.decUnlock(b, action.amount);
-          reserve();
+      case (#Unlock) if (b.locked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.locked }) else {
+        b := Wallet.decLock(b, instructions[index].amount);
+        b := Wallet.incUnlock(b, instructions[index].amount);
+        reserve(#Ok index);
+      };
+      case (#Transfer action) {
+        if (b.unlocked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.unlocked });
+        if (Account.equal(instructions[index].account, action.to)) return #Err(#InvalidTransfer { index });
+        b := Wallet.decUnlock(b, instructions[index].amount);
+        reserve();
 
-          a := getAccount(action.to);
-          b := Wallet.getBalance(asset_key, a.subacc_data);
-          b := Wallet.incUnlock(b, action.amount);
-          reserve(#Ok index);
-        };
+        a := getAccount(action.to);
+        b := Wallet.getBalance(asset_key, a.subacc_data);
+        b := Wallet.incUnlock(b, instructions[index].amount);
+        reserve(#Ok index);
       };
-    };
+    } else return #Err(#ZeroAmount { index });
     switch (execute(0)) {
       case (#Err err) return #Err err;
       case _ ();
     };
     for (i in Iter.range(1, instructions.size() - 1)) {
       a := getAccount(instructions[i].account);
+      asset_key := switch (getAssetKey(instructions[i].asset)) {
+        case (?found) found;
+        case _ return #Err(#UnlistedAsset { index = i });
+      };
+      b := Wallet.getBalance(asset_key, a.subacc_data);
       switch (execute(i)) {
         case (#Err err) return #Err err;
         case _ ();
       };
     };
-    // todo: commit all reserves
+    for ((k, v) in RBTree.entries(lusers)) users := RBTree.insert(users, Principal.compare, k, v);
+    for ((k, v) in RBTree.entries(luser_ids)) user_ids := RBTree.insert(user_ids, Nat.compare, k, v);
+    for ((k, v) in RBTree.entries(lsubacc_maps)) subaccount_maps := RBTree.insert(subaccount_maps, Blob.compare, k, v);
+    for ((k, v) in RBTree.entries(lsubacc_ids)) subaccount_ids := RBTree.insert(subaccount_ids, Nat.compare, k, v);
+
     // todo: blockify
     #Ok 1;
   };

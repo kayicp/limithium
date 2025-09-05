@@ -88,25 +88,29 @@ module {
     #ICRC2 : (token_id : Nat);
   };
   public type Action = {
-    #Lock : { amount : Nat };
-    #Unlock : { amount : Nat };
-    #Transfer : { amount : Nat; to : Account.Pair };
+    // todo: move amount to Instruction
+    #Lock;
+    #Unlock;
+    #Transfer : { to : Account.Pair };
   };
   public type ExecuteErr = {
     #GenericError : Error.Type;
     #UnlistedAsset : { index : Nat };
     #InsufficientBalance : { index : Nat; balance : Nat };
     #InvalidTransfer : { index : Nat };
+    #ZeroAmount : { index : Nat };
   };
   public type ExecuteRes = Result.Type<Nat, ExecuteErr>;
   public type Instruction = {
     account : Account.Pair;
     asset : Asset;
+    amount : Nat;
     action : Action;
   };
   public type UserData = {
+    owner : Principal;
     user : User;
-    arg_subacc : Blob;
+    subacc : Blob;
     subacc_map : SubaccountMap;
     subacc_data : Subaccount;
   };

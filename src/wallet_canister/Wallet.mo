@@ -22,6 +22,12 @@ module {
   public func saveSubaccount(u : W.User, subacc_id : Nat, subacc : W.Subaccount) : W.User = ({
     u with subaccounts = RBTree.insert(u.subaccounts, Nat.compare, subacc_id, subacc)
   });
+  public func getBalance(asset_key : W.AssetKey, s : W.Subaccount) : W.Balance = switch asset_key {
+    case (#ICRC2 token_id) getICRCBalance(s, token_id);
+  };
+  public func saveBalance(asset_key : W.AssetKey, s : W.Subaccount, b : W.Balance) : W.Subaccount = switch asset_key {
+    case (#ICRC2 token_id) saveICRCBalance(s, token_id, b);
+  };
   public func incLock(b : W.Balance, amt : Nat) : W.Balance = {
     b with locked = b.locked + amt
   };
@@ -33,8 +39,5 @@ module {
   };
   public func decUnlock(b : W.Balance, amt : Nat) : W.Balance = {
     b with unlocked = b.unlocked - amt
-  };
-  public func getBalance(asset_key : W.AssetKey, s : W.Subaccount) : W.Balance = switch asset_key {
-    case (#ICRC2 token_id) getICRCBalance(s, token_id);
   };
 };
