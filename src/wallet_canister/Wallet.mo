@@ -12,8 +12,8 @@ module {
     case (?found) found;
     case _ ({ unlocked = 0; locked = 0 });
   };
-  public func saveICRCBalance(s : W.Subaccount, token : Nat, bal : W.Balance) : W.Subaccount = ({
-    s with icrc2s = RBTree.insert(s.icrc2s, Nat.compare, token, bal)
+  public func saveICRCBalance(s : W.Subaccount, token : Nat, b : W.Balance) : W.Subaccount = ({
+    s with icrc2s = RBTree.insert(s.icrc2s, Nat.compare, token, b)
   });
   public func getSubaccount(u : W.User, subacc_id : Nat) : W.Subaccount = switch (RBTree.get(u.subaccounts, Nat.compare, subacc_id)) {
     case (?found) found;
@@ -22,17 +22,19 @@ module {
   public func saveSubaccount(u : W.User, subacc_id : Nat, subacc : W.Subaccount) : W.User = ({
     u with subaccounts = RBTree.insert(u.subaccounts, Nat.compare, subacc_id, subacc)
   });
-  public func incLock(bal : W.Balance, amt : Nat) : W.Balance = {
-    bal with locked = bal.locked + amt
+  public func incLock(b : W.Balance, amt : Nat) : W.Balance = {
+    b with locked = b.locked + amt
   };
-  public func decLock(bal : W.Balance, amt : Nat) : W.Balance = {
-    bal with locked = bal.locked - amt
+  public func decLock(b : W.Balance, amt : Nat) : W.Balance = {
+    b with locked = b.locked - amt
   };
-  public func incUnlock(bal : W.Balance, amt : Nat) : W.Balance = {
-    bal with unlocked = bal.unlocked + amt
+  public func incUnlock(b : W.Balance, amt : Nat) : W.Balance = {
+    b with unlocked = b.unlocked + amt
   };
-  public func decUnlock(bal : W.Balance, amt : Nat) : W.Balance = {
-    bal with unlocked = bal.unlocked - amt
+  public func decUnlock(b : W.Balance, amt : Nat) : W.Balance = {
+    b with unlocked = b.unlocked - amt
   };
-
+  public func getBalance(asset_key : W.AssetKey, s : W.Subaccount) : W.Balance = switch asset_key {
+    case (#ICRC2 token_id) getICRCBalance(s, token_id);
+  };
 };

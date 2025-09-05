@@ -84,6 +84,9 @@ module {
     // #ETH;
     // #ERC20 : { contract_address: Text };
   };
+  public type AssetKey = {
+    #ICRC2 : (token_id : Nat);
+  };
   public type Action = {
     #Lock : { amount : Nat };
     #Unlock : { amount : Nat };
@@ -93,11 +96,18 @@ module {
     #GenericError : Error.Type;
     #UnlistedAsset : { index : Nat };
     #InsufficientBalance : { index : Nat; balance : Nat };
+    #InvalidTransfer : { index : Nat };
   };
   public type ExecuteRes = Result.Type<Nat, ExecuteErr>;
   public type Instruction = {
     account : Account.Pair;
     asset : Asset;
     action : Action;
+  };
+  public type UserData = {
+    user : User;
+    arg_subacc : Blob;
+    subacc_map : SubaccountMap;
+    subacc_data : Subaccount;
   };
 };
