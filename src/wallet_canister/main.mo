@@ -4,8 +4,6 @@ import Account "../util/motoko/ICRC-1/Account";
 import ICRC2Token "../util/motoko/ICRC-1/Types";
 import Error "../util/motoko/Error";
 import Value "../util/motoko/Value";
-import Array "mo:base/Array";
-import Text "mo:base/Text";
 import Principal "mo:base/Principal";
 import Nat64 "mo:base/Nat64";
 import Blob "mo:base/Blob";
