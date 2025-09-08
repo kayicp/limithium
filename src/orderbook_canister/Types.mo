@@ -2,13 +2,15 @@ import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import ID "../util/motoko/ID";
+import W "../wallet_canister/Types";
 
 module {
   public let AVAILABLE = "orderbook:available";
   public let MAX_ORDER_BATCH = "orderbook:max_order_batch_size";
 
-  public let SELL_TOKEN_ID = "icrc1_icrc1_orderbook:sell_canister_id";
-  public let BUY_TOKEN_ID = "icrc1_icrc1_orderbook:buy_canister_id";
+  public let WALLET = "orderbook:wallet_canister_id";
+  public let BASE_TOKEN = "icrc1_icrc1_orderbook:base_canister_id";
+  public let QUOTE_TOKEN = "icrc1_icrc1_orderbook:quote_canister_id";
 
   public let AMOUNT_TICK = "orderbook:amount_tick";
   public let PRICE_TICK = "orderbook:price_tick";
@@ -58,7 +60,7 @@ module {
     is_buy : Bool;
     price : Nat;
     base : Amount; // in sell unit
-    expires_at : Nat;
+    expires_at : Nat64;
     trades : ID.Many<()>;
     closed : ?OrderClosed;
   };
@@ -107,11 +109,15 @@ module {
     #PriceTooFar : { index : Nat; nearest_price : Nat };
     #AmountTooFar : { index : Nat; nearest_amount : Nat };
     #DuplicatePrice : { indexes : [Nat] };
-    #OverlappedOrders : { sell_index : Nat; buy_index : Nat };
+    #PriceOverlap : { sell_index : Nat; buy_index : Nat };
     #PriceTooHigh : { index : Nat; maximum_price : Nat };
     #PriceTooLow : { index : Nat; minimum_price : Nat };
     #PriceUnavailable : { index : Nat; order_id : Nat };
     #BadFee : { expected_fee : Nat };
+    #CreatedInFuture : { ledger_time : Nat64 };
+    #TooOld;
+    #Duplicate : { duplicate_of : Nat };
+    #ExecutionFailed : { instructions : [W.Instruction]; error : W.ExecuteErr };
   };
   public type PlaceRes = Result.Type<[(order_id : Nat)], PlaceErr>;
 
