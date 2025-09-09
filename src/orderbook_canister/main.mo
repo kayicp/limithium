@@ -32,14 +32,14 @@ shared (install) persistent actor class Canister(
   var subacc_maps = RBTree.empty<Blob, O.SubaccountMap>();
   var subacc_ids = ID.empty<Blob>();
 
+  var order_id = 0;
+  var orders = ID.empty<O.Order>();
+  var orders_by_expiry : O.Expiries = RBTree.empty();
+
   var base = OrderBook.newAmount(0); // sell unit
   var quote = OrderBook.newAmount(0); // buy unit
   var sell_book : O.Book = RBTree.empty();
   var buy_book : O.Book = RBTree.empty();
-
-  var order_id = 0;
-  var orders = ID.empty<O.Order>();
-  var orders_by_expiry : O.Expiries = RBTree.empty();
 
   var place_dedupes = RBTree.empty();
 
@@ -265,15 +265,41 @@ shared (install) persistent actor class Canister(
     base := OrderBook.incAmount(base, OrderBook.newAmount(lbase));
     quote := OrderBook.incAmount(quote, OrderBook.newAmount(lquote));
     var lorders = ID.empty<O.Order>(); // for blockify
-    for ((o_price, o) in RBTree.entries(lsells)) {
+    func newOrder(o : { index : Nat; expiry : Nat64 }) : O.Order {
       let new_order = OrderBook.newOrder(now, { arg.orders[o.index] with owner = user.id; subaccount = subacc.map.id; expires_at = o.expiry });
       orders := ID.insert(orders, order_id, new_order);
       lorders := ID.insert(lorders, order_id, new_order);
-      // sell_book :=
+
+      var expiries = OrderBook.getExpiries(orders_by_expiry, o.expiry);
+      expiries := ID.insert(expiries, order_id, ());
+      orders_by_expiry := OrderBook.saveExpiries(orders_by_expiry, o.expiry, expiries);
+      new_order;
+    };
+    for ((o_price, o) in RBTree.entries(lsells)) {
+      let new_order = newOrder(o);
+      var price = OrderBook.getPrice(sell_book, o_price);
+      price := OrderBook.priceNewOrder(price, order_id, new_order);
+      sell_book := OrderBook.savePrice(sell_book, o_price, price);
+      subacc := {
+        subacc with data = OrderBook.subaccNewSell(subacc.data, order_id, new_order)
+      };
       order_id += 1;
     };
+    for ((o_price, o) in RBTree.entries(lbuys)) {
+      let new_order = newOrder(o);
+      var price = OrderBook.getPrice(buy_book, o_price);
+      price := OrderBook.priceNewOrder(price, order_id, new_order);
+      buy_book := OrderBook.savePrice(buy_book, o_price, price);
+      subacc := {
+        subacc with data = OrderBook.subaccNewBuy(subacc.data, order_id, new_order)
+      };
+      order_id += 1;
+    };
+    user := saveSubaccount(user, arg_subacc, subacc.map, subacc.data);
+    user := saveUser(caller, user);
 
     // todo: blockify
+    // todo: save dedupe
     #Ok([]);
   };
 

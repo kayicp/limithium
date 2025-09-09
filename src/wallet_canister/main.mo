@@ -93,6 +93,7 @@ shared (install) persistent actor class Canister(
 
     // todo: take fee, but later since fee is zero
     // todo: blockify
+    // todo: save dedupe
     #Ok 1;
   };
   // todo: deposit/withdraw icrc1_transfer
@@ -181,6 +182,7 @@ shared (install) persistent actor class Canister(
     user := saveUser(this_canister, user);
 
     // todo: blockify
+    // todo: save dedupe
     #Ok 1;
   };
 
