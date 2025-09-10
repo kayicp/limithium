@@ -11,6 +11,7 @@ module {
   public let MAX_MEMO = "wallet:max_memo_size";
   public let TX_WINDOW = "wallet:tx_window";
   public let PERMITTED_DRIFT = "wallet:permitted_drift";
+  public let FEE_COLLECTOR = "wallet:fee_collector";
 
   public type ICRC1TokenArg = {
     subaccount : ?Blob;

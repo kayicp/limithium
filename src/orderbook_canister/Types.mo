@@ -88,15 +88,14 @@ module {
     is_buy : Bool;
     expires_at : ?Nat64;
   };
-  // todo: use base/quote terms
   type Fee = {
-    is_base : Bool;
-    amount : ?Nat;
+    base : Nat;
+    quote : Nat;
   };
   public type PlaceArg = {
     subaccount : ?Blob;
     orders : [OrderArg];
-    fee : ?Fee; // if undefined, dex could use dex token
+    fee : ?Fee;
     memo : ?Blob;
     created_at_time : ?Nat64;
   };
@@ -113,13 +112,36 @@ module {
     #PriceTooHigh : { index : Nat; maximum_price : Nat };
     #PriceTooLow : { index : Nat; minimum_price : Nat };
     #PriceUnavailable : { index : Nat; order_id : Nat };
-    #BadFee : { expected_fee : Nat };
+    #BadFee : { expected_base : Nat; expected_quote : Nat };
     #CreatedInFuture : { ledger_time : Nat64 };
     #TooOld;
     #Duplicate : { duplicate_of : Nat };
     #ExecutionFailed : { instructions : [W.Instruction]; error : W.ExecuteErr };
   };
   public type PlaceRes = Result.Type<[(order_id : Nat)], PlaceErr>;
+
+  public type CancelArg = {
+    subaccount : ?Blob;
+    order_ids : [Nat];
+    fee : ?Fee;
+    memo : ?Blob;
+  };
+  public type CancelErr = {
+    #GenericError : Error.Type;
+    #BatchTooLarge : { batch_size : Nat; maximum_batch_size : Nat };
+    #Duplicate : { indexes : [Nat] };
+    #Unauthorized : { index : Nat };
+    #NotFound : { index : Nat };
+    #Closed : { index : Nat; at : Nat64 };
+    #Locked : { index : Nat };
+    #BadFee : { expected_base : Nat; expected_quote : Nat };
+    #ExecutionFailed : { instructions : [W.Instruction]; error : W.ExecuteErr };
+  };
+  public type CancelRes = Result.Type<Nat, CancelErr>;
+
+  public type RunArg = { subaccount : ?Blob };
+  public type RunErr = { #GenericError : Error.Type };
+  public type RunRes = Result.Type<Nat, RunErr>;
 
   public type ArgType = {
     #Place : PlaceArg;

@@ -47,6 +47,15 @@ module {
     filled = a.filled * b;
     locked = a.locked * b;
   };
+  public func lockAmount(a : O.Amount, b : Nat) : O.Amount = {
+    a with locked = a.locked + b
+  };
+  public func unlockAmount(a : O.Amount, b : Nat) : O.Amount = {
+    a with locked = a.locked - b
+  };
+  public func fillAmount(a : O.Amount, b : Nat) : O.Amount = {
+    a with filled = a.filled + b
+  };
   public func newOrder(now : Nat64, { owner : Nat; subaccount : Nat; is_buy : Bool; price : Nat; amount : Nat; expires_at : Nat64 }) : O.Order = {
     created_at = now;
     owner;
@@ -69,6 +78,9 @@ module {
     base = incAmount(p.base, o.base);
     orders = ID.insert(p.orders, oid, ());
   });
+  public func priceLock(p : O.Price, l : Nat) : O.Price = ({
+    p with base = lockAmount(p.base, l)
+  });
   public func savePrice(b : O.Book, price : Nat, p : O.Price) : O.Book = if (RBTree.size(p.orders) > 0) {
     RBTree.insert(b, Nat.compare, price, p);
   } else RBTree.delete(b, Nat.compare, price);
@@ -84,6 +96,13 @@ module {
     buys = RBTree.insert(s.buys, Nat.compare, o.price, oid);
     quote = incAmount(s.quote, mulAmount(o.base, o.price));
   });
+
+  public func subaccLockQuote(s : O.Subaccount, n : Nat) : O.Subaccount = {
+    s with quote = lockAmount(s.quote, n)
+  };
+  public func subaccLockBase(s : O.Subaccount, n : Nat) : O.Subaccount = {
+    s with base = lockAmount(s.base, n);
+  };
 
   public func getExpiries(e : O.Expiries, t : Nat64) : ID.Many<()> = switch (RBTree.get(e, Nat64.compare, t)) {
     case (?found) found;
