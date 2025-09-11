@@ -14,6 +14,8 @@ import Wallet "Wallet";
 import ID "../util/motoko/ID";
 import Result "../util/motoko/Result";
 
+// todo: lets not use user/subacc id mapping, store everything as-is
+
 shared (install) persistent actor class Canister(
   // deploy : {
   //   #Init : ();
