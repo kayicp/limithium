@@ -55,18 +55,14 @@ module {
   };
   public type Order = {
     created_at : Nat64;
-    owner : Nat;
-    subaccount : Nat;
+    owner : Principal;
+    subaccount : ?Blob;
     is_buy : Bool;
     price : Nat;
     base : Amount; // in sell unit
     expires_at : Nat64;
     trades : ID.Many<()>;
     closed : ?OrderClosed;
-  };
-  public type SubaccountMap = {
-    id : Nat;
-    owners : ID.Many<()>;
   };
   public type Subaccount = {
     orders : ID.Many<()>;
@@ -78,8 +74,7 @@ module {
     trades : ID.Many<()>;
   };
   public type User = {
-    id : Nat;
-    subaccs : ID.Many<Subaccount>;
+    subaccs : RBTree.Type<Blob, Subaccount>;
   };
   public type Users = RBTree.Type<Principal, User>;
   type OrderArg = {

@@ -46,21 +46,16 @@ module {
   };
   public type WithdrawRes = Result.Type<Nat, WithdrawErr>;
 
-  public type SubaccountMap = {
-    id : Nat;
-    owners : ID.Many<()>;
-  };
   public type Balance = {
     unlocked : Nat;
     locked : Nat;
   };
   public type Subaccount = {
-    icrc2s : ID.Many<Balance>;
+    icrc1s : RBTree.Type<Principal, Balance>;
   };
   public type User = {
-    id : Nat;
     last_activity : Nat64; // for trimming
-    subaccs : ID.Many<Subaccount>;
+    subaccs : RBTree.Type<Blob, Subaccount>;
   };
   public type Users = RBTree.Type<Principal, User>;
   public type ICRCDedupes = RBTree.Type<(Principal, ICRC1TokenArg), Nat>;
@@ -70,7 +65,6 @@ module {
     #WithdrawICRC : ICRC1TokenArg;
   };
   public type ICRC1Token = {
-    id : Nat;
     min_deposit : Nat;
     deposit_fee : Nat;
     withdrawal_fee : Nat;
@@ -80,9 +74,6 @@ module {
     // #BTC;
     // #ETH;
     // #ERC20 : { contract_address: Text };
-  };
-  public type AssetKey = {
-    #ICRC1 : (token_id : Nat);
   };
   public type Action = {
     // todo: move amount to Instruction
@@ -108,7 +99,6 @@ module {
     owner : Principal;
     user : User;
     subacc : Blob;
-    subacc_map : SubaccountMap;
     subacc_data : Subaccount;
   };
 };

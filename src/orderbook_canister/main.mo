@@ -28,9 +28,6 @@ shared (install) persistent actor class Canister(
   var meta : Value.Metadata = RBTree.empty();
 
   var users : O.Users = RBTree.empty();
-  var user_ids = ID.empty<Principal>();
-  var subacc_maps = RBTree.empty<Blob, O.SubaccountMap>();
-  var subacc_ids = ID.empty<Blob>();
 
   var order_id = 0;
   var orders = ID.empty<O.Order>();
@@ -41,7 +38,7 @@ shared (install) persistent actor class Canister(
   var sell_book : O.Book = RBTree.empty();
   var buy_book : O.Book = RBTree.empty();
 
-  var place_dedupes = RBTree.empty();
+  var place_dedupes : O.PlaceDedupes = RBTree.empty();
 
   // public shared query func orderbook_base_balances_of() : async [Nat] {
   //   []
@@ -201,10 +198,10 @@ shared (install) persistent actor class Canister(
 
     var user = getUser(caller);
     let arg_subacc = Account.denull(arg.subaccount);
-    var subacc = getSubaccount(user, arg_subacc);
+    var subacc = OrderBook.getSubaccount(user, arg_subacc);
 
-    let min_gsell = RBTree.min(subacc.data.sells);
-    let max_gbuy = RBTree.max(subacc.data.buys);
+    let min_gsell = RBTree.min(subacc.sells);
+    let max_gbuy = RBTree.max(subacc.buys);
     switch (min_lsell, max_gbuy) {
       case (?(lsell_price, lsell), ?(gbuy_price, gbuy)) if (lsell_price <= gbuy_price) return #Err(#PriceTooLow { lsell with minimum_price = gbuy_price });
       case _ ();
@@ -213,11 +210,11 @@ shared (install) persistent actor class Canister(
       case (?(lbuy_price, lbuy), ?(gsell_price, gsell)) if (lbuy_price >= gsell_price) return #Err(#PriceTooHigh { lbuy with maximum_price = gsell_price });
       case _ ();
     };
-    for ((lsell_price, lsell) in RBTree.entries(lsells)) switch (RBTree.get(subacc.data.sells, Nat.compare, lsell_price)) {
+    for ((lsell_price, lsell) in RBTree.entries(lsells)) switch (RBTree.get(subacc.sells, Nat.compare, lsell_price)) {
       case (?found) return #Err(#PriceUnavailable { lsell with order_id = found });
       case _ ();
     };
-    for ((lbuy_price, lbuy) in RBTree.entries(lbuys)) switch (RBTree.get(subacc.data.buys, Nat.compare, lbuy_price)) {
+    for ((lbuy_price, lbuy) in RBTree.entries(lbuys)) switch (RBTree.get(subacc.buys, Nat.compare, lbuy_price)) {
       case (?found) return #Err(#PriceUnavailable { lbuy with order_id = found });
       case _ ();
     };
@@ -266,7 +263,7 @@ shared (install) persistent actor class Canister(
     quote := OrderBook.incAmount(quote, OrderBook.newAmount(lquote));
     var lorders = ID.empty<O.Order>(); // for blockify
     func newOrder(o : { index : Nat; expiry : Nat64 }) : O.Order {
-      let new_order = OrderBook.newOrder(now, { arg.orders[o.index] with owner = user.id; subaccount = subacc.map.id; expires_at = o.expiry });
+      let new_order = OrderBook.newOrder(now, { arg.orders[o.index] with owner = caller; subaccount = arg.subaccount; expires_at = o.expiry });
       orders := ID.insert(orders, order_id, new_order);
       lorders := ID.insert(lorders, order_id, new_order);
 
@@ -280,9 +277,7 @@ shared (install) persistent actor class Canister(
       var price = OrderBook.getPrice(sell_book, o_price);
       price := OrderBook.priceNewOrder(price, order_id, new_order);
       sell_book := OrderBook.savePrice(sell_book, o_price, price);
-      subacc := {
-        subacc with data = OrderBook.subaccNewSell(subacc.data, order_id, new_order)
-      };
+      subacc := OrderBook.subaccNewSell(subacc, order_id, new_order);
       order_id += 1;
     };
     for ((o_price, o) in RBTree.entries(lbuys)) {
@@ -290,12 +285,10 @@ shared (install) persistent actor class Canister(
       var price = OrderBook.getPrice(buy_book, o_price);
       price := OrderBook.priceNewOrder(price, order_id, new_order);
       buy_book := OrderBook.savePrice(buy_book, o_price, price);
-      subacc := {
-        subacc with data = OrderBook.subaccNewBuy(subacc.data, order_id, new_order)
-      };
+      subacc := OrderBook.subaccNewBuy(subacc, order_id, new_order);
       order_id += 1;
     };
-    user := saveSubaccount(user, arg_subacc, subacc.map, subacc.data);
+    user := OrderBook.saveSubaccount(user, arg_subacc, subacc);
     user := saveUser(caller, user);
 
     // todo: blockify
@@ -332,7 +325,7 @@ shared (install) persistent actor class Canister(
 
     var user = getUser(caller);
     let arg_subacc = Account.denull(arg.subaccount);
-    var subacc = getSubaccount(user, arg_subacc);
+    var subacc = OrderBook.getSubaccount(user, arg_subacc);
     let now = Time64.nanos();
     var fbase = 0;
     var fquote = 0;
@@ -346,7 +339,7 @@ shared (install) persistent actor class Canister(
         case (?found) return #Err(#Duplicate { indexes = [found.index, index] });
         case _ ();
       };
-      if (not RBTree.has(subacc.data.orders, Nat.compare, i)) return #Err(#Unauthorized { index });
+      if (not RBTree.has(subacc.orders, Nat.compare, i)) return #Err(#Unauthorized { index });
       var o = switch (RBTree.get(orders, Nat.compare, i)) {
         case (?found) found;
         case _ return #Err(#NotFound { index });
@@ -399,8 +392,7 @@ shared (install) persistent actor class Canister(
         buy_book := OrderBook.savePrice(buy_book, o.data.price, price);
 
         let o_lock = o.data.base.locked * o.data.price;
-        let subacc_lock = OrderBook.subaccLockQuote(subacc.data, o_lock);
-        subacc := { subacc with data = subacc_lock };
+        subacc := OrderBook.subaccLockQuote(subacc, o_lock);
         quote := OrderBook.lockAmount(quote, o_lock);
         lquote += o_lock;
       } else {
@@ -408,13 +400,12 @@ shared (install) persistent actor class Canister(
         price := OrderBook.priceLock(price, o.data.base.locked);
         sell_book := OrderBook.savePrice(sell_book, o.data.price, price);
 
-        let subacc_lock = OrderBook.subaccLockBase(subacc.data, o.data.base.locked);
-        subacc := { subacc with data = subacc_lock };
+        subacc := OrderBook.subaccLockBase(subacc, o.data.base.locked);
         base := OrderBook.lockAmount(base, o.data.base.locked);
         lbase += o.data.base.locked;
       };
     };
-    user := saveSubaccount(user, arg_subacc, subacc.map, subacc.data);
+    user := OrderBook.saveSubaccount(user, arg_subacc, subacc);
     user := saveUser(caller, user);
 
     let instructions_buff = Buffer.Buffer<W.Instruction>(4);
@@ -450,7 +441,7 @@ shared (install) persistent actor class Canister(
       case (#Ok ok) ok;
     };
     user := getUser(caller);
-    subacc := getSubaccount(user, arg_subacc);
+    subacc := OrderBook.getSubaccount(user, arg_subacc);
 
     // let (base_token, quote_token) = (ICRC1Token.genActor(base_token_id), ICRC1Token.genActor(quote_token_id));
 
@@ -459,34 +450,11 @@ shared (install) persistent actor class Canister(
 
   func getUser(p : Principal) : O.User = switch (RBTree.get(users, Principal.compare, p)) {
     case (?found) found;
-    case _ ({
-      id = ID.recycle(user_ids);
-      subaccs = RBTree.empty();
-    });
+    case _ ({ subaccs = RBTree.empty() });
   };
   func saveUser(p : Principal, u : O.User) : O.User {
     users := RBTree.insert(users, Principal.compare, p, u);
-    user_ids := ID.insert(user_ids, u.id, p);
     u;
-  };
-  func getSubaccount(u : O.User, sub : Blob) : {
-    map : O.SubaccountMap;
-    data : O.Subaccount;
-  } {
-    let map = switch (RBTree.get(subacc_maps, Blob.compare, sub)) {
-      case (?found) found;
-      case _ ({
-        id = ID.recycle(subacc_ids);
-        owners = RBTree.empty();
-      });
-    };
-    let owners = ID.insert(map.owners, u.id, ());
-    { map = { map with owners }; data = OrderBook.getSubaccount(u, map.id) };
-  };
-  func saveSubaccount(u : O.User, sub : Blob, map : O.SubaccountMap, data : O.Subaccount) : O.User {
-    subacc_maps := RBTree.insert(subacc_maps, Blob.compare, sub, map);
-    subacc_ids := ID.insert(subacc_ids, map.id, sub);
-    OrderBook.saveSubaccount(u, map.id, data);
   };
   func checkMemo(m : ?Blob) : Result.Type<(), Error.Generic> = switch m {
     case (?defined) {

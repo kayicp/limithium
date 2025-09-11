@@ -4,6 +4,7 @@ import ID "../util/motoko/ID";
 import Order "mo:base/Order";
 import Nat "mo:base/Nat";
 import Nat64 "mo:base/Nat64";
+import Blob "mo:base/Blob";
 
 module {
   public func newAmount(initial : Nat) : O.Amount = {
@@ -11,7 +12,7 @@ module {
     locked = 0;
     filled = 0;
   };
-  public func getSubaccount(u : O.User, subacc_id : Nat) : O.Subaccount = switch (ID.get(u.subaccs, subacc_id)) {
+  public func getSubaccount(u : O.User, subacc_id : Blob) : O.Subaccount = switch (RBTree.get(u.subaccs, Blob.compare, subacc_id)) {
     case (?found) found;
     case _ ({
       orders = ID.empty();
@@ -22,8 +23,8 @@ module {
       trades = ID.empty();
     });
   };
-  public func saveSubaccount(u : O.User, subacc_id : Nat, subacc : O.Subaccount) : O.User = ({
-    u with subaccs = ID.insert(u.subaccs, subacc_id, subacc)
+  public func saveSubaccount(u : O.User, subacc_id : Blob, subacc : O.Subaccount) : O.User = ({
+    u with subaccs = RBTree.insert(u.subaccs, Blob.compare, subacc_id, subacc)
   });
   public func dedupePlace(a : (Principal, O.PlaceArg), b : (Principal, O.PlaceArg)) : Order.Order = #equal; // todo: finish, start with time
 
@@ -56,7 +57,7 @@ module {
   public func fillAmount(a : O.Amount, b : Nat) : O.Amount = {
     a with filled = a.filled + b
   };
-  public func newOrder(now : Nat64, { owner : Nat; subaccount : Nat; is_buy : Bool; price : Nat; amount : Nat; expires_at : Nat64 }) : O.Order = {
+  public func newOrder(now : Nat64, { owner : Principal; subaccount : ?Blob; is_buy : Bool; price : Nat; amount : Nat; expires_at : Nat64 }) : O.Order = {
     created_at = now;
     owner;
     subaccount;
