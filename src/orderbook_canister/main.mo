@@ -511,35 +511,185 @@ shared (install) persistent actor class Canister(
     let user_acct = { owner = caller; subaccount = arg.subaccount };
     if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
 
-    switch (RBTree.min(sell_book), RBTree.max(buy_book)) {
-      case (?(min_sell_price, min_sell), ?(max_buy_price, max_buy)) if (min_sell_price <= max_buy_price) switch (RBTree.minKey(min_sell.orders), RBTree.minKey(max_buy.orders)) {
-        case (?earliest_sell, ?earliest_buy) ignore match(min_sell_price, min_sell, earliest_sell, max_buy_price, max_buy, earliest_buy);
-        case _ trim();
-      } else trim();
-      case _ trim();
+    label matching while (RBTree.size(sell_book) > 0 and RBTree.size(buy_book) > 0) for ((sell_p, sell_lvl) in RBTree.entries(sell_book)) for ((buy_p, buy_lvl) in RBTree.entriesReverse(buy_book))
+
+    {
+      let sell_id = switch (RBTree.minKey(sell_lvl.orders)) {
+        case (?earliest) earliest;
+        case _ {
+          sell_book := RBTree.delete(sell_book, Nat.compare, sell_p);
+          continue matching;
+        };
+      };
+      var sell_o = switch (RBTree.get(orders, Nat.compare, sell_id)) {
+        case (?found) found;
+        case _ {
+          let sell_os = RBTree.delete(sell_lvl.orders, Nat.compare, sell_id);
+          sell_book := OrderBook.savePrice(sell_book, sell_p, { sell_lvl with orders = sell_os });
+          continue matching;
+        };
+      };
+      let buy_id = switch (RBTree.minKey(buy_lvl.orders)) {
+        case (?earliest) earliest;
+        case _ {
+          buy_book := RBTree.delete(buy_book, Nat.compare, buy_p);
+          continue matching;
+        };
+      };
+      var buy_o = switch (RBTree.get(orders, Nat.compare, buy_id)) {
+        case (?found) found;
+        case _ {
+          let buy_os = RBTree.delete(buy_lvl.orders, Nat.compare, buy_id);
+          buy_book := OrderBook.savePrice(buy_book, buy_p, { buy_lvl with orders = buy_os });
+          continue matching;
+        };
+      };
+
+      // for ((sell_id, _) in RBTree.entries(sell_lvl.orders))
+      // for ((buy_id));
+
     };
+
+    // switch (RBTree.min(sell_book), RBTree.max(buy_book)) {
+    //   case (?(min_sell_price, min_sell), ?(max_buy_price, max_buy)) if (min_sell_price <= max_buy_price) switch (RBTree.minKey(min_sell.orders), RBTree.minKey(max_buy.orders)) {
+    //     case (?earliest_sell, ?earliest_buy) ignore match(min_sell_price, min_sell, earliest_sell, max_buy_price, max_buy, earliest_buy);
+    //     case _ trim();
+    //   } else trim();
+    //   case _ trim();
+    // };
     #Ok 1;
   };
 
-  func match(sell_price : Nat, sell_lvl : O.Price, sell_oid : Nat, buy_price : Nat, buy_lvl : O.Price, buy_oid : Nat) : Bool {
-    var sell_o = switch (ID.get(orders, sell_oid)) {
-      case (?found) found;
-      case _ {
-        let min_sells = RBTree.delete(sell_lvl.orders, Nat.compare, sell_oid);
-        sell_book := RBTree.insert(sell_book, Nat.compare, sell_price, { sell_lvl with orders = min_sells });
-        return false;
+  func match0(now : Nat64) {
+    var sell_p = switch (RBTree.min(sell_book)) {
+      case (?(key, lvl)) ({ key; lvl });
+      case _ return;
+    };
+    var buy_p = switch (RBTree.max(buy_book)) {
+      case (?(key, lvl)) ({ key; lvl });
+      case _ return;
+    };
+    label matching while (true) {
+      let move_sell = switch (match1(now, (sell_p.key, sell_p.lvl), (buy_p.key, buy_p.lvl))) {
+        case (#Return) return;
+        case (#NextSell) true;
+        case (#NextBuy) false;
+      };
+      if (move_sell) sell_p := switch (RBTree.right(sell_book, Nat.compare, sell_p.key + 1)) {
+        case (?(key, lvl)) ({ key; lvl });
+        case _ return;
+      } else if (buy_p.key == 0) return else buy_p := switch (RBTree.left(buy_book, Nat.compare, buy_p.key - 1)) {
+        case (?(key, lvl)) ({ key; lvl });
+        case _ return;
       };
     };
-    var buy_o = switch (ID.get(orders, buy_oid)) {
-      case (?found) found;
-      case _ {
-        let min_buys = RBTree.delete(buy_lvl.orders, Nat.compare, buy_oid);
-        buy_book := RBTree.insert(buy_book, Nat.compare, buy_price, { buy_lvl with orders = min_buys });
-        return false;
-      };
-    };
+  };
 
-    true;
+  func match1(now : Nat64, (sell_p : Nat, _sell_lvl : O.Price), (buy_p : Nat, _buy_lvl : O.Price)) : {
+    #Return;
+    #NextSell;
+    #NextBuy;
+  } {
+    var sell_lvl = _sell_lvl;
+    var buy_lvl = _buy_lvl;
+    var sell_id = switch (RBTree.minKey(sell_lvl.orders)) {
+      case (?min) min;
+      case _ {
+        sell_book := RBTree.delete(sell_book, Nat.compare, sell_p);
+        base := OrderBook.decAmount(base, sell_lvl.base);
+        return #NextSell;
+      };
+    };
+    var buy_id = switch (RBTree.minKey(buy_lvl.orders)) {
+      case (?min) min;
+      case _ {
+        buy_book := RBTree.delete(buy_book, Nat.compare, buy_p);
+        quote := OrderBook.decAmount(quote, OrderBook.mulAmount(buy_lvl.base, buy_p));
+        return #NextBuy;
+      };
+    };
+    label matching while (true) {
+      let move_buy = switch (match2(now, (sell_id, sell_p), (buy_id, buy_p))) {
+        case (#Return) return #Return;
+        case (#SameId order) true;
+        case (#SameOwner) true;
+        case (#WrongPrice order) true;
+        case (#WrongSide order) true;
+        case (#Next is_buy) is_buy;
+        case (#Missing is_buy) {
+          if (is_buy) {
+            let lvl_oids = RBTree.delete(buy_lvl.orders, Nat.compare, buy_id);
+            buy_lvl := { buy_lvl with orders = lvl_oids };
+            buy_book := OrderBook.savePrice(buy_book, buy_p, buy_lvl);
+          } else {
+            let lvl_oids = RBTree.delete(sell_lvl.orders, Nat.compare, sell_id);
+            sell_lvl := { sell_lvl with orders = lvl_oids };
+            sell_book := OrderBook.savePrice(sell_book, sell_p, sell_lvl);
+          };
+          is_buy;
+        };
+        case (#Closed is_buy) {
+          is_buy;
+        };
+        case (#Close(is_buy, reason, order)) {
+          is_buy;
+        };
+      };
+      if (move_buy) buy_id := switch (RBTree.right(buy_lvl.orders, Nat.compare, buy_id + 1)) {
+        case (?(found, _)) found;
+        case _ return #NextBuy;
+      } else sell_id := switch (RBTree.right(sell_lvl.orders, Nat.compare, sell_id + 1)) {
+        case (?(found, _)) found;
+        case _ return #NextSell;
+      };
+    };
+    #Return;
+  };
+
+  func match2(now : Nat64, (sell_id : Nat, sell_p : Nat), (buy_id : Nat, buy_p : Nat)) : {
+    #Return;
+    #Missing : Bool;
+    #WrongSide : O.Order;
+    #WrongPrice : O.Order;
+    #SameId : O.Order;
+    #SameOwner;
+    #Next : Bool;
+    #Closed : Bool;
+    #Close : (Bool, { #Expired; #Filled }, O.Order);
+  } {
+    var sell_o = switch (RBTree.get(orders, Nat.compare, sell_id)) {
+      case (?found) found;
+      case _ return #Missing false;
+    };
+    if (sell_id == buy_id) return #SameId sell_o;
+
+    if (sell_o.is_buy) return #WrongSide sell_o;
+    if (sell_o.price != sell_p) return #WrongPrice sell_o;
+    if (sell_o.closed != null) return #Closed false;
+    if (sell_o.expires_at < now) return #Close(false, #Expired, sell_o);
+    let sell_remain = if (sell_o.base.initial > sell_o.base.filled) sell_o.base.initial - sell_o.base.filled else return #Close(false, #Filled, sell_o);
+    let sell_unlock = if (sell_remain > sell_o.base.locked) sell_remain - sell_o.base.locked else return #Next false;
+
+    var buy_o = switch (RBTree.get(orders, Nat.compare, buy_id)) {
+      case (?found) found;
+      case _ return #Missing true;
+    };
+    if (not buy_o.is_buy) return #WrongSide buy_o;
+    if (buy_o.price != buy_p) return #WrongPrice buy_o;
+    if (buy_o.closed != null) return #Closed true;
+    if (buy_o.expires_at < now) return #Close(true, #Expired, buy_o);
+    let buy_remain = if (buy_o.base.initial > buy_o.base.filled) buy_o.base.initial - buy_o.base.filled else return #Close(true, #Filled, buy_o);
+    let buy_unlock = if (buy_remain > buy_o.base.locked) buy_remain - buy_o.base.locked else return #Next true;
+
+    let amount = Nat.min(sell_unlock, buy_unlock);
+
+    if (sell_o.price > buy_o.price) return #Return;
+    let sell_sub = Account.denull(sell_o.subaccount);
+    let buy_sub = Account.denull(buy_o.subaccount);
+    if (sell_o.owner == buy_o.owner and sell_sub == buy_sub) return #SameOwner;
+    // let sell_is_maker = if ()
+
+    #Return;
   };
 
   func trim() {

@@ -54,15 +54,15 @@ module {
     };
   };
   public type Order = {
-    created_at : Nat64;
-    owner : Principal;
-    subaccount : ?Blob;
     is_buy : Bool;
     price : Nat;
-    base : Amount; // in sell unit
-    expires_at : Nat64;
-    trades : ID.Many<()>;
     closed : ?OrderClosed;
+    expires_at : Nat64;
+    base : Amount; // in sell unit
+    owner : Principal;
+    subaccount : ?Blob;
+    created_at : Nat64;
+    trades : ID.Many<()>;
   };
   public type Subaccount = {
     orders : ID.Many<()>;
