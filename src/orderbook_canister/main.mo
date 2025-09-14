@@ -6,12 +6,10 @@ import Value "../util/motoko/Value";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Error "../util/motoko/Error";
 import Account "../util/motoko/ICRC-1/Account";
-import ICRC1Token "../util/motoko/ICRC-1/Types";
 import ID "../util/motoko/ID";
 import Principal "mo:base/Principal";
 import Blob "mo:base/Blob";
 import Nat64 "mo:base/Nat64";
-import Nat8 "mo:base/Nat8";
 import Nat "mo:base/Nat";
 import Iter "mo:base/Iter";
 import Option "mo:base/Option";
@@ -26,7 +24,6 @@ shared (install) persistent actor class Canister(
   // }
 ) = Self {
   var meta : Value.Metadata = RBTree.empty();
-
   var users : O.Users = RBTree.empty();
 
   var order_id = 0;
@@ -57,99 +54,11 @@ shared (install) persistent actor class Canister(
     let max_batch = Value.getNat(meta, O.MAX_ORDER_BATCH, 0);
     if (max_batch > 0 and arg.orders.size() > max_batch) return #Err(#BatchTooLarge { batch_size = arg.orders.size(); maximum_batch_size = max_batch });
 
-    let base_token_id = switch (Value.metaPrincipal(meta, O.BASE_TOKEN)) {
-      case (?found) found;
-      case _ return Error.text("Metadata `" # O.BASE_TOKEN # "` is not properly set");
+    let env = switch (await* OrderBook.getEnvironment(meta)) {
+      case (#Err err) return #Err err;
+      case (#Ok ok) ok;
     };
-    let quote_token_id = switch (Value.metaPrincipal(meta, O.QUOTE_TOKEN)) {
-      case (?found) found;
-      case _ return Error.text("Metadata `" # O.QUOTE_TOKEN # "` is not properly set");
-    };
-    let (base_token, quote_token) = (ICRC1Token.genActor(base_token_id), ICRC1Token.genActor(quote_token_id));
-
-    let (base_decimals_res, quote_decimals_res, base_fee_res, quote_fee_res) = (base_token.icrc1_decimals(), quote_token.icrc1_decimals(), base_token.icrc1_fee(), quote_token.icrc1_fee());
-    let (base_power, quote_power, base_token_fee, quote_token_fee) = (10 ** Nat8.toNat(await base_decimals_res), 10 ** Nat8.toNat(await quote_decimals_res), await base_fee_res, await quote_fee_res);
-
-    var amount_tick = Value.getNat(meta, O.AMOUNT_TICK, 0);
-    if (amount_tick < base_token_fee) {
-      amount_tick := base_token_fee;
-      meta := Value.setNat(meta, O.AMOUNT_TICK, ?amount_tick);
-    };
-    var price_tick = Value.getNat(meta, O.PRICE_TICK, 0);
-    if (price_tick < quote_token_fee) {
-      price_tick := quote_token_fee;
-      meta := Value.setNat(meta, O.PRICE_TICK, ?price_tick);
-    };
-    var fee_denom = Value.getNat(meta, O.TRADING_FEE_DENOM, 0);
-    if (fee_denom < 100) {
-      fee_denom := 100;
-      meta := Value.setNat(meta, O.TRADING_FEE_DENOM, ?fee_denom);
-    };
-    var maker_fee_numer = Value.getNat(meta, O.MAKER_FEE_NUMER, 0);
-    let max_fee_denom = fee_denom / 10; // max at most 10%
-    if (maker_fee_numer > max_fee_denom) {
-      maker_fee_numer := max_fee_denom;
-      meta := Value.setNat(meta, O.MAKER_FEE_NUMER, ?maker_fee_numer);
-    };
-    var taker_fee_numer = Value.getNat(meta, O.TAKER_FEE_NUMER, 0);
-    if (taker_fee_numer > max_fee_denom) {
-      taker_fee_numer := max_fee_denom;
-      meta := Value.setNat(meta, O.TAKER_FEE_NUMER, ?taker_fee_numer);
-    };
-    let min_fee_numer = Nat.max(1, Nat.min(maker_fee_numer, taker_fee_numer));
-    // todo: rethink?
-    // (tokenfee * 2) for amount + future transfer of amount
-    let lowest_base_amount = base_token_fee * 2 * fee_denom / min_fee_numer;
-    var min_base_amount = Value.getNat(meta, O.MIN_BASE_AMOUNT, 0);
-    if (min_base_amount < lowest_base_amount) {
-      min_base_amount := lowest_base_amount;
-      meta := Value.setNat(meta, O.MIN_BASE_AMOUNT, ?min_base_amount);
-    };
-    let lowest_quote_amount = quote_token_fee * 2 * fee_denom / min_fee_numer;
-    var min_quote_amount = Value.getNat(meta, O.MIN_QUOTE_AMOUNT, 0);
-    if (min_quote_amount < lowest_quote_amount) {
-      min_quote_amount := lowest_quote_amount;
-      meta := Value.setNat(meta, O.MIN_QUOTE_AMOUNT, ?min_quote_amount);
-    };
-    let lowest_price = min_quote_amount / min_base_amount;
-    var min_price = Value.getNat(meta, O.MIN_PRICE, 0);
-    if (min_price < lowest_price) {
-      min_price := lowest_price;
-      meta := Value.setNat(meta, O.MIN_PRICE, ?min_price);
-    };
-
-    var max_expiry = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, O.MAX_ORDER_EXPIRY, 0)));
-    let lowest_max_expiry = Time64.HOURS(24);
-    let highest_max_expiry = lowest_max_expiry * 30;
-    if (max_expiry < lowest_max_expiry) {
-      max_expiry := lowest_max_expiry;
-      meta := Value.setNat(meta, O.MAX_ORDER_EXPIRY, ?(Nat64.toNat(lowest_max_expiry / 1_000_000_000)));
-    } else if (max_expiry > highest_max_expiry) {
-      max_expiry := highest_max_expiry;
-      meta := Value.setNat(meta, O.MAX_ORDER_EXPIRY, ?(Nat64.toNat(highest_max_expiry / 1_000_000_000)));
-    };
-
-    var min_expiry = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, O.MIN_ORDER_EXPIRY, 0)));
-    let lowest_min_expiry = Time64.HOURS(1);
-    let max_expiry_seconds = Nat64.toNat(max_expiry / 1_000_000_000);
-    if (min_expiry < lowest_min_expiry) {
-      min_expiry := lowest_min_expiry;
-      meta := Value.setNat(meta, O.MIN_ORDER_EXPIRY, ?(Nat64.toNat(min_expiry / 1_000_000_000)));
-    } else if (min_expiry > max_expiry) {
-      min_expiry := max_expiry;
-      meta := Value.setNat(meta, O.DEFAULT_ORDER_EXPIRY, ?max_expiry_seconds);
-    };
-
-    var default_expiry = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, O.DEFAULT_ORDER_EXPIRY, 0)));
-    if (default_expiry < min_expiry or default_expiry > max_expiry) {
-      default_expiry := (min_expiry + max_expiry) / 2;
-      meta := Value.setNat(meta, O.DEFAULT_ORDER_EXPIRY, ?(Nat64.toNat(default_expiry / 1_000_000_000)));
-    };
-
-    let now = Time64.nanos();
-    let max_expires_at = now + max_expiry;
-    let min_expires_at = now + min_expiry;
-    let default_expires_at = now + default_expiry;
+    meta := env.meta;
 
     var lsells = RBTree.empty<(price : Nat), { index : Nat; expiry : Nat64 }>();
     var lbase = 0;
@@ -157,19 +66,19 @@ shared (install) persistent actor class Canister(
     var lquote = 0;
     for (index in Iter.range(0, arg.orders.size() - 1)) {
       let o = arg.orders[index];
-      let o_expiry = Option.get(o.expires_at, default_expires_at);
-      if (o_expiry < min_expires_at) return #Err(#ExpiresTooSoon { index; minimum_expires_at = min_expires_at });
-      if (o_expiry > max_expires_at) return #Err(#ExpiresTooLate { index; maximum_expires_at = max_expires_at });
+      let o_expiry = Option.get(o.expires_at, env.default_expires_at);
+      if (o_expiry < env.min_expires_at) return #Err(#ExpiresTooSoon { index; minimum_expires_at = env.min_expires_at });
+      if (o_expiry > env.max_expires_at) return #Err(#ExpiresTooLate { index; maximum_expires_at = env.max_expires_at });
 
-      if (o.price < min_price) return #Err(#PriceTooLow { index; minimum_price = min_price });
+      if (o.price < env.min_price) return #Err(#PriceTooLow { index; minimum_price = env.min_price });
 
-      let nearest_price = OrderBook.nearTick(o.price, price_tick);
+      let nearest_price = OrderBook.nearTick(o.price, env.price_tick);
       if (o.price != nearest_price) return #Err(#PriceTooFar { index; nearest_price });
 
-      let min_amount = Nat.max(min_base_amount, min_quote_amount / o.price);
+      let min_amount = Nat.max(env.min_base_amount, env.min_quote_amount / o.price);
       if (o.amount < min_amount) return #Err(#AmountTooLow { index; minimum_amount = min_amount });
 
-      let nearest_amount = OrderBook.nearTick(o.amount, amount_tick);
+      let nearest_amount = OrderBook.nearTick(o.amount, env.amount_tick);
       if (o.amount != nearest_amount) return #Err(#AmountTooFar { index; nearest_amount });
 
       if (o.is_buy) {
@@ -231,7 +140,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    switch (checkIdempotency(caller, #Place arg, now, arg.created_at_time)) {
+    switch (checkIdempotency(caller, #Place arg, env.now, arg.created_at_time)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -243,13 +152,13 @@ shared (install) persistent actor class Canister(
     let instructions_buff = Buffer.Buffer<W.Instruction>(2);
     if (lbase > 0) instructions_buff.add({
       account = user_acct;
-      asset = #ICRC1 { canister_id = base_token_id };
+      asset = #ICRC1 { canister_id = env.base_token_id };
       amount = lbase;
       action = #Lock;
     });
     if (lquote > 0) instructions_buff.add({
       account = user_acct;
-      asset = #ICRC1 { canister_id = quote_token_id };
+      asset = #ICRC1 { canister_id = env.quote_token_id };
       amount = lquote;
       action = #Lock;
     });
@@ -263,7 +172,7 @@ shared (install) persistent actor class Canister(
     quote := OrderBook.incAmount(quote, OrderBook.newAmount(lquote));
     var lorders = ID.empty<O.Order>(); // for blockify
     func newOrder(o : { index : Nat; expiry : Nat64 }) : O.Order {
-      let new_order = OrderBook.newOrder(now, { arg.orders[o.index] with owner = caller; subaccount = arg.subaccount; expires_at = o.expiry });
+      let new_order = OrderBook.newOrder(env.now, { arg.orders[o.index] with owner = caller; subaccount = arg.subaccount; expires_at = o.expiry });
       orders := ID.insert(orders, order_id, new_order);
       lorders := ID.insert(lorders, order_id, new_order);
 
@@ -560,7 +469,24 @@ shared (install) persistent actor class Canister(
     #Ok 1;
   };
 
-  func match0(now : Nat64) {
+  func getFeeCollector() : Account.Pair = {
+    subaccount = null;
+    owner = switch (Value.metaPrincipal(meta, O.FEE_COLLECTOR)) {
+      case (?found) found;
+      case _ Principal.fromActor(Self);
+    };
+  };
+
+  func match0() : async* () {
+    let wallet = switch (Value.metaPrincipal(meta, O.WALLET)) {
+      case (?found) actor (Principal.toText(found)) : Wallet.Canister;
+      case _ return; // Error.text("Metadata `" # O.WALLET # "` not properly set");
+    };
+    let env = switch (await* OrderBook.getEnvironment(meta)) {
+      case (#Err err) return;
+      case (#Ok ok) ok;
+    };
+    meta := env.meta;
     var sell_p = switch (RBTree.min(sell_book)) {
       case (?(key, lvl)) ({ key; lvl });
       case _ return;
@@ -570,7 +496,7 @@ shared (install) persistent actor class Canister(
       case _ return;
     };
     label matching while (true) {
-      let move_sell = switch (match1(now, (sell_p.key, sell_p.lvl), (buy_p.key, buy_p.lvl))) {
+      let move_sell = switch (await* match1(wallet, getFeeCollector(), env, (sell_p.key, sell_p.lvl), (buy_p.key, buy_p.lvl))) {
         case (#Return) return;
         case (#NextSell) true;
         case (#NextBuy) false;
@@ -585,7 +511,7 @@ shared (install) persistent actor class Canister(
     };
   };
 
-  func match1(now : Nat64, (sell_p : Nat, _sell_lvl : O.Price), (buy_p : Nat, _buy_lvl : O.Price)) : {
+  func match1(wallet : Wallet.Canister, fee_collector : Account.Pair, env : O.Environment, (sell_p : Nat, _sell_lvl : O.Price), (buy_p : Nat, _buy_lvl : O.Price)) : async* {
     #Return;
     #NextSell;
     #NextBuy;
@@ -608,8 +534,8 @@ shared (install) persistent actor class Canister(
         return #NextBuy;
       };
     };
-    label matching while (true) {
-      let move_buy = switch (match2(now, (sell_id, sell_p), (buy_id, buy_p))) {
+    label matching while true {
+      let move_buy = switch (await* match2(wallet, fee_collector, env, (sell_id, sell_p, sell_lvl), (buy_id, buy_p, buy_lvl))) {
         case (#Return) return #Return;
         case (#SameId order) true;
         case (#SameOwner) true;
@@ -646,7 +572,7 @@ shared (install) persistent actor class Canister(
     #Return;
   };
 
-  func match2(now : Nat64, (sell_id : Nat, sell_p : Nat), (buy_id : Nat, buy_p : Nat)) : {
+  func match2(wallet : Wallet.Canister, fee_collector : Account.Pair, env : O.Environment, (sell_id : Nat, sell_p : Nat, _sell_lvl : O.Price), (buy_id : Nat, buy_p : Nat, _buy_lvl : O.Price)) : async* {
     #Return;
     #Missing : Bool;
     #WrongSide : O.Order;
@@ -666,9 +592,10 @@ shared (install) persistent actor class Canister(
     if (sell_o.is_buy) return #WrongSide sell_o;
     if (sell_o.price != sell_p) return #WrongPrice sell_o;
     if (sell_o.closed != null) return #Closed false;
-    if (sell_o.expires_at < now) return #Close(false, #Expired, sell_o);
+    if (sell_o.expires_at < env.now) return #Close(false, #Expired, sell_o);
+    if (sell_o.base.locked > 0) return #Next false;
     let sell_remain = if (sell_o.base.initial > sell_o.base.filled) sell_o.base.initial - sell_o.base.filled else return #Close(false, #Filled, sell_o);
-    let sell_unlock = if (sell_remain > sell_o.base.locked) sell_remain - sell_o.base.locked else return #Next false;
+    if (sell_remain < env.min_base_amount) return #Close(false, #Filled, sell_o);
 
     var buy_o = switch (RBTree.get(orders, Nat.compare, buy_id)) {
       case (?found) found;
@@ -677,23 +604,95 @@ shared (install) persistent actor class Canister(
     if (not buy_o.is_buy) return #WrongSide buy_o;
     if (buy_o.price != buy_p) return #WrongPrice buy_o;
     if (buy_o.closed != null) return #Closed true;
-    if (buy_o.expires_at < now) return #Close(true, #Expired, buy_o);
+    if (buy_o.expires_at < env.now) return #Close(true, #Expired, buy_o);
+    if (buy_o.base.locked > 0) return #Next true;
     let buy_remain = if (buy_o.base.initial > buy_o.base.filled) buy_o.base.initial - buy_o.base.filled else return #Close(true, #Filled, buy_o);
-    let buy_unlock = if (buy_remain > buy_o.base.locked) buy_remain - buy_o.base.locked else return #Next true;
+    if (buy_remain < env.min_base_amount) return #Close(true, #Filled, buy_o);
 
-    let amount = Nat.min(sell_unlock, buy_unlock);
-
+    let sell_maker = sell_id < buy_id;
+    let p = if (sell_maker) sell_o.price else buy_o.price;
+    if (sell_remain * p < env.min_quote_amount) return #Close(false, #Filled, sell_o);
+    if (buy_remain * p < env.min_quote_amount) return #Close(true, #Filled, buy_o);
     if (sell_o.price > buy_o.price) return #Return;
+
     let sell_sub = Account.denull(sell_o.subaccount);
     let buy_sub = Account.denull(buy_o.subaccount);
     if (sell_o.owner == buy_o.owner and sell_sub == buy_sub) return #SameOwner;
-    // let sell_is_maker = if ()
 
+    let amount = Nat.min(sell_remain, buy_remain);
+    let amount_q = amount * p;
+
+    // lock everything from here
+    sell_o := { sell_o with base = OrderBook.lockAmount(sell_o.base, amount) };
+    orders := RBTree.insert(orders, Nat.compare, sell_id, sell_o);
+    buy_o := { buy_o with base = OrderBook.lockAmount(buy_o.base, amount) };
+    orders := RBTree.insert(orders, Nat.compare, buy_id, buy_o);
+
+    base := OrderBook.lockAmount(base, amount);
+    quote := OrderBook.lockAmount(quote, amount_q);
+
+    var sell_lvl = OrderBook.priceLock(_sell_lvl, amount);
+    sell_book := OrderBook.savePrice(sell_book, sell_p, sell_lvl);
+    var buy_lvl = OrderBook.priceLock(_buy_lvl, amount);
+    buy_book := OrderBook.savePrice(buy_book, buy_p, buy_lvl);
+
+    var seller = getUser(sell_o.owner);
+    var seller_sub = OrderBook.getSubaccount(seller, sell_sub);
+    seller_sub := OrderBook.subaccLockBase(seller_sub, amount);
+    seller := OrderBook.saveSubaccount(seller, sell_sub, seller_sub);
+    var buyer = getUser(buy_o.owner);
+    var buyer_sub = OrderBook.getSubaccount(buyer, buy_sub);
+    buyer_sub := OrderBook.subaccLockQuote(buyer_sub, amount_q);
+    buyer := OrderBook.saveSubaccount(buyer, buy_sub, buyer_sub);
+
+    let (seller_fee, buyer_fee) = if (sell_maker) (
+      (env.maker_fee_numer * amount_q) / env.fee_denom,
+      (env.taker_fee_numer * amount) / env.fee_denom,
+    ) else (
+      (env.taker_fee_numer * amount_q) / env.fee_denom,
+      (env.maker_fee_numer * amount) / env.fee_denom,
+    );
+    let base_i = {
+      account = sell_o;
+      asset = #ICRC1 { canister_id = env.base_token_id };
+      amount;
+      action = #Unlock;
+    };
+    let quote_i = {
+      account = buy_o;
+      asset = #ICRC1 { canister_id = env.quote_token_id };
+      amount;
+      action = #Unlock;
+    };
+    let instructions_buff = Buffer.Buffer<W.Instruction>(6);
+    instructions_buff.add(base_i);
+    instructions_buff.add(quote_i);
+    instructions_buff.add({ base_i with action = #Transfer { to = buy_o } });
+    instructions_buff.add({ quote_i with action = #Transfer { to = sell_o } });
+    if (seller_fee > 0) instructions_buff.add({
+      quote_i with account = sell_o;
+      amount = seller_fee;
+      action = #Transfer { to = fee_collector };
+    });
+    if (buyer_fee > 0) instructions_buff.add({
+      base_i with account = buy_o;
+      amount = buyer_fee;
+      action = #Transfer { to = fee_collector };
+    });
+    let instructions = Buffer.toArray(instructions_buff);
+    switch (await wallet.wallet_execute(instructions)) {
+      case (#Err err) {
+
+      };
+      case (#Ok ok) {
+
+      };
+    };
     #Return;
   };
 
   func trim() {
 
   };
-  // todo: lets not use user/subacc id mapping, store everything as-is
+
 };

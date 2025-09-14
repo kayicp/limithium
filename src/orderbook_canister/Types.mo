@@ -3,6 +3,8 @@ import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import ID "../util/motoko/ID";
 import W "../wallet_canister/Types";
+import Value "../util/motoko/Value";
+import Account "../util/motoko/ICRC-1/Account";
 
 module {
   public let AVAILABLE = "orderbook:available";
@@ -35,14 +37,16 @@ module {
 
   public let MIN_MEMO = "orderbook:min_memo_size";
   public let MAX_MEMO = "orderbook:max_memo_size";
+  public let FEE_COLLECTOR = "orderbook:fee_collector";
 
   public type Expiries = RBTree.Type<Nat64, ID.Many<()>>;
   public type Amount = { initial : Nat; locked : Nat; filled : Nat };
   public type Price = { base : Amount; orders : ID.Many<()> };
   public type Book = RBTree.Type<(price : Nat), Price>;
   public type Trade = {
-    maker : { order : Nat };
-    taker : { order : Nat };
+    maker : Nat;
+    taker : Nat;
+    //  : Nat;
   };
   public type OrderClosed = {
     at : Nat64;
@@ -50,7 +54,6 @@ module {
       #Filled;
       #Expired;
       #Canceled;
-      #Failed : { trade : Nat };
     };
   };
   public type Order = {
@@ -137,6 +140,24 @@ module {
   public type RunArg = { subaccount : ?Blob };
   public type RunErr = { #GenericError : Error.Type };
   public type RunRes = Result.Type<Nat, RunErr>;
+
+  public type Environment = {
+    meta : Value.Metadata;
+    amount_tick : Nat;
+    base_token_id : Principal;
+    default_expires_at : Nat64;
+    fee_denom : Nat;
+    maker_fee_numer : Nat;
+    max_expires_at : Nat64;
+    min_base_amount : Nat;
+    min_expires_at : Nat64;
+    min_price : Nat;
+    min_quote_amount : Nat;
+    price_tick : Nat;
+    quote_token_id : Principal;
+    taker_fee_numer : Nat;
+    now : Nat64;
+  };
 
   public type ArgType = {
     #Place : PlaceArg;

@@ -5,6 +5,12 @@ import Order "mo:base/Order";
 import Nat "mo:base/Nat";
 import Nat64 "mo:base/Nat64";
 import Blob "mo:base/Blob";
+import Nat8 "mo:base/Nat8";
+import Result "../util/motoko/Result";
+import Error "../util/motoko/Error";
+import Value "../util/motoko/Value";
+import ICRC1Token "../util/motoko/ICRC-1/Types";
+import Time64 "../util/motoko/Time64";
 
 module {
   public func newAmount(initial : Nat) : O.Amount = {
@@ -113,4 +119,112 @@ module {
   public func saveExpiries(e : O.Expiries, t : Nat64, ids : ID.Many<()>) : O.Expiries = if (RBTree.size(ids) > 0) {
     RBTree.insert(e, Nat64.compare, t, ids);
   } else RBTree.delete(e, Nat64.compare, t);
+
+  public func getEnvironment(_meta : Value.Metadata) : async* Result.Type<O.Environment, Error.Generic> {
+    var meta = _meta;
+    let base_token_id = switch (Value.metaPrincipal(meta, O.BASE_TOKEN)) {
+      case (?found) found;
+      case _ return Error.text("Metadata `" # O.BASE_TOKEN # "` is not properly set");
+    };
+    let quote_token_id = switch (Value.metaPrincipal(meta, O.QUOTE_TOKEN)) {
+      case (?found) found;
+      case _ return Error.text("Metadata `" # O.QUOTE_TOKEN # "` is not properly set");
+    };
+    if (base_token_id == quote_token_id) return Error.text("Base token and Quote token are similar");
+    let (base_token, quote_token) = (ICRC1Token.genActor(base_token_id), ICRC1Token.genActor(quote_token_id));
+
+    let (base_decimals_res, quote_decimals_res, base_fee_res, quote_fee_res) = (base_token.icrc1_decimals(), quote_token.icrc1_decimals(), base_token.icrc1_fee(), quote_token.icrc1_fee());
+    let (base_power, quote_power, base_token_fee, quote_token_fee) = (10 ** Nat8.toNat(await base_decimals_res), 10 ** Nat8.toNat(await quote_decimals_res), await base_fee_res, await quote_fee_res);
+
+    var amount_tick = Value.getNat(meta, O.AMOUNT_TICK, 0);
+    if (amount_tick < base_token_fee) {
+      amount_tick := base_token_fee;
+      meta := Value.setNat(meta, O.AMOUNT_TICK, ?amount_tick);
+    };
+    var price_tick = Value.getNat(meta, O.PRICE_TICK, 0);
+    if (price_tick < quote_token_fee) {
+      price_tick := quote_token_fee;
+      meta := Value.setNat(meta, O.PRICE_TICK, ?price_tick);
+    };
+    var fee_denom = Value.getNat(meta, O.TRADING_FEE_DENOM, 0);
+    if (fee_denom < 100) {
+      fee_denom := 100;
+      meta := Value.setNat(meta, O.TRADING_FEE_DENOM, ?fee_denom);
+    };
+    var maker_fee_numer = Value.getNat(meta, O.MAKER_FEE_NUMER, 0);
+    let max_fee_denom = fee_denom / 10; // max at most 10%
+    if (maker_fee_numer > max_fee_denom) {
+      maker_fee_numer := max_fee_denom;
+      meta := Value.setNat(meta, O.MAKER_FEE_NUMER, ?maker_fee_numer);
+    };
+    var taker_fee_numer = Value.getNat(meta, O.TAKER_FEE_NUMER, 0);
+    if (taker_fee_numer > max_fee_denom) {
+      taker_fee_numer := max_fee_denom;
+      meta := Value.setNat(meta, O.TAKER_FEE_NUMER, ?taker_fee_numer);
+    };
+    let min_fee_numer = Nat.max(1, Nat.min(maker_fee_numer, taker_fee_numer));
+    // todo: rethink?
+    // (tokenfee * 2) for amount + future transfer of amount
+    let lowest_base_amount = base_token_fee * 2 * fee_denom / min_fee_numer;
+    var min_base_amount = Value.getNat(meta, O.MIN_BASE_AMOUNT, 0);
+    if (min_base_amount < lowest_base_amount) {
+      min_base_amount := lowest_base_amount;
+      meta := Value.setNat(meta, O.MIN_BASE_AMOUNT, ?min_base_amount);
+    };
+    let lowest_quote_amount = quote_token_fee * 2 * fee_denom / min_fee_numer;
+    var min_quote_amount = Value.getNat(meta, O.MIN_QUOTE_AMOUNT, 0);
+    if (min_quote_amount < lowest_quote_amount) {
+      min_quote_amount := lowest_quote_amount;
+      meta := Value.setNat(meta, O.MIN_QUOTE_AMOUNT, ?min_quote_amount);
+    };
+    let lowest_price = min_quote_amount / min_base_amount;
+    var min_price = Value.getNat(meta, O.MIN_PRICE, 0);
+    if (min_price < lowest_price) {
+      min_price := lowest_price;
+      meta := Value.setNat(meta, O.MIN_PRICE, ?min_price);
+    };
+    var max_expiry = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, O.MAX_ORDER_EXPIRY, 0)));
+    let lowest_max_expiry = Time64.HOURS(24);
+    let highest_max_expiry = lowest_max_expiry * 30;
+    if (max_expiry < lowest_max_expiry) {
+      max_expiry := lowest_max_expiry;
+      meta := Value.setNat(meta, O.MAX_ORDER_EXPIRY, ?(Nat64.toNat(lowest_max_expiry / 1_000_000_000)));
+    } else if (max_expiry > highest_max_expiry) {
+      max_expiry := highest_max_expiry;
+      meta := Value.setNat(meta, O.MAX_ORDER_EXPIRY, ?(Nat64.toNat(highest_max_expiry / 1_000_000_000)));
+    };
+    var min_expiry = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, O.MIN_ORDER_EXPIRY, 0)));
+    let lowest_min_expiry = Time64.HOURS(1);
+    let max_expiry_seconds = Nat64.toNat(max_expiry / 1_000_000_000);
+    if (min_expiry < lowest_min_expiry) {
+      min_expiry := lowest_min_expiry;
+      meta := Value.setNat(meta, O.MIN_ORDER_EXPIRY, ?(Nat64.toNat(min_expiry / 1_000_000_000)));
+    } else if (min_expiry > max_expiry) {
+      min_expiry := max_expiry;
+      meta := Value.setNat(meta, O.DEFAULT_ORDER_EXPIRY, ?max_expiry_seconds);
+    };
+    var default_expiry = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, O.DEFAULT_ORDER_EXPIRY, 0)));
+    if (default_expiry < min_expiry or default_expiry > max_expiry) {
+      default_expiry := (min_expiry + max_expiry) / 2;
+      meta := Value.setNat(meta, O.DEFAULT_ORDER_EXPIRY, ?(Nat64.toNat(default_expiry / 1_000_000_000)));
+    };
+    let now = Time64.nanos();
+    #Ok {
+      meta;
+      base_token_id;
+      quote_token_id;
+      amount_tick;
+      price_tick;
+      fee_denom;
+      maker_fee_numer;
+      taker_fee_numer;
+      min_base_amount;
+      min_quote_amount;
+      min_price;
+      now;
+      max_expires_at = now + max_expiry;
+      min_expires_at = now + min_expiry;
+      default_expires_at = now + default_expiry;
+    };
+  };
 };
