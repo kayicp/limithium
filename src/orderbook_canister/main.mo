@@ -624,26 +624,33 @@ shared (install) persistent actor class Canister(
 
     // lock everything from here
     sell_o := { sell_o with base = OrderBook.lockAmount(sell_o.base, amount) };
-    orders := RBTree.insert(orders, Nat.compare, sell_id, sell_o);
     buy_o := { buy_o with base = OrderBook.lockAmount(buy_o.base, amount) };
-    orders := RBTree.insert(orders, Nat.compare, buy_id, buy_o);
 
     base := OrderBook.lockAmount(base, amount);
     quote := OrderBook.lockAmount(quote, amount_q);
 
     var sell_lvl = OrderBook.priceLock(_sell_lvl, amount);
-    sell_book := OrderBook.savePrice(sell_book, sell_p, sell_lvl);
     var buy_lvl = OrderBook.priceLock(_buy_lvl, amount);
-    buy_book := OrderBook.savePrice(buy_book, buy_p, buy_lvl);
 
     var seller = getUser(sell_o.owner);
     var seller_sub = OrderBook.getSubaccount(seller, sell_sub);
     seller_sub := OrderBook.subaccLockBase(seller_sub, amount);
-    seller := OrderBook.saveSubaccount(seller, sell_sub, seller_sub);
+
     var buyer = getUser(buy_o.owner);
     var buyer_sub = OrderBook.getSubaccount(buyer, buy_sub);
     buyer_sub := OrderBook.subaccLockQuote(buyer_sub, amount_q);
-    buyer := OrderBook.saveSubaccount(buyer, buy_sub, buyer_sub);
+
+    func saveMatch() {
+      orders := RBTree.insert(orders, Nat.compare, sell_id, sell_o);
+      orders := RBTree.insert(orders, Nat.compare, buy_id, buy_o);
+      sell_book := OrderBook.savePrice(sell_book, sell_p, sell_lvl);
+      buy_book := OrderBook.savePrice(buy_book, buy_p, buy_lvl);
+      seller := OrderBook.saveSubaccount(seller, sell_sub, seller_sub);
+      seller := saveUser(sell_o.owner, seller);
+      buyer := OrderBook.saveSubaccount(buyer, buy_sub, buyer_sub);
+      buyer := saveUser(buy_o.owner, buyer);
+    };
+    saveMatch();
 
     let (seller_fee, buyer_fee) = if (sell_maker) (
       (env.maker_fee_numer * amount_q) / env.fee_denom,
@@ -680,12 +687,41 @@ shared (install) persistent actor class Canister(
       action = #Transfer { to = fee_collector };
     });
     let instructions = Buffer.toArray(instructions_buff);
-    switch (await wallet.wallet_execute(instructions)) {
+    let execute = await wallet.wallet_execute(instructions);
+    sell_o := { sell_o with base = OrderBook.unlockAmount(sell_o.base, amount) };
+    buy_o := { buy_o with base = OrderBook.unlockAmount(buy_o.base, amount) };
+    base := OrderBook.unlockAmount(base, amount);
+    quote := OrderBook.unlockAmount(quote, amount_q);
+
+    sell_lvl := OrderBook.getPrice(sell_book, sell_p);
+    sell_lvl := OrderBook.priceUnlock(sell_lvl, amount);
+    buy_lvl := OrderBook.getPrice(buy_book, buy_p);
+    buy_lvl := OrderBook.priceUnlock(buy_lvl, amount);
+
+    seller := getUser(sell_o.owner);
+    seller_sub := OrderBook.getSubaccount(seller, sell_sub);
+    seller_sub := OrderBook.subaccUnlockBase(seller_sub, amount);
+    buyer := getUser(buy_o.owner);
+    buyer_sub := OrderBook.getSubaccount(buyer, buy_sub);
+    buyer_sub := OrderBook.subaccUnlockQuote(buyer_sub, amount_q);
+
+    switch execute {
       case (#Err err) {
 
+        saveMatch();
       };
       case (#Ok ok) {
-
+        sell_o := {
+          sell_o with base = OrderBook.fillAmount(sell_o.base, amount)
+        };
+        buy_o := { buy_o with base = OrderBook.fillAmount(buy_o.base, amount) };
+        base := OrderBook.fillAmount(base, amount);
+        quote := OrderBook.fillAmount(quote, amount_q);
+        sell_lvl := OrderBook.priceFill(sell_lvl, amount);
+        buy_lvl := OrderBook.priceFill(buy_lvl, amount);
+        seller_sub := OrderBook.subaccFillBase(seller_sub, amount);
+        buyer_sub := OrderBook.subaccFillQuote(buyer_sub, amount_q);
+        saveMatch();
       };
     };
     #Return;
