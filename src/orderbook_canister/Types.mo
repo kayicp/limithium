@@ -44,9 +44,11 @@ module {
   public type Price = { base : Amount; orders : ID.Many<()> };
   public type Book = RBTree.Type<(price : Nat), Price>;
   public type Trade = {
-    maker : Nat;
-    taker : Nat;
-    //  : Nat;
+    sell : { id : Nat; base : Nat; fee_quote : Nat };
+    buy : { id : Nat; quote : Nat; fee_base : Nat };
+    at : Nat64;
+    price : Nat;
+    proof : Nat;
   };
   public type OrderClosed = {
     at : Nat64;
@@ -138,7 +140,10 @@ module {
   public type CancelRes = Result.Type<Nat, CancelErr>;
 
   public type RunArg = { subaccount : ?Blob };
-  public type RunErr = { #GenericError : Error.Type };
+  public type RunErr = {
+    #GenericError : Error.Type;
+    #TradeFailed : W.ExecuteErr;
+  };
   public type RunRes = Result.Type<Nat, RunErr>;
 
   public type Environment = {

@@ -35,7 +35,13 @@ shared (install) persistent actor class Canister(
   var sell_book : O.Book = RBTree.empty();
   var buy_book : O.Book = RBTree.empty();
 
+  var trade_id = 0;
+  var trades = RBTree.empty<Nat, O.Trade>();
+
   var place_dedupes : O.PlaceDedupes = RBTree.empty();
+
+  var block_id = 0;
+  var blocks = RBTree.empty<Nat, Value.Type>();
 
   // public shared query func orderbook_base_balances_of() : async [Nat] {
   //   []
@@ -420,53 +426,47 @@ shared (install) persistent actor class Canister(
     let user_acct = { owner = caller; subaccount = arg.subaccount };
     if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
 
-    label matching while (RBTree.size(sell_book) > 0 and RBTree.size(buy_book) > 0) for ((sell_p, sell_lvl) in RBTree.entries(sell_book)) for ((buy_p, buy_lvl) in RBTree.entriesReverse(buy_book))
-
-    {
-      let sell_id = switch (RBTree.minKey(sell_lvl.orders)) {
-        case (?earliest) earliest;
-        case _ {
-          sell_book := RBTree.delete(sell_book, Nat.compare, sell_p);
-          continue matching;
-        };
-      };
-      var sell_o = switch (RBTree.get(orders, Nat.compare, sell_id)) {
-        case (?found) found;
-        case _ {
-          let sell_os = RBTree.delete(sell_lvl.orders, Nat.compare, sell_id);
-          sell_book := OrderBook.savePrice(sell_book, sell_p, { sell_lvl with orders = sell_os });
-          continue matching;
-        };
-      };
-      let buy_id = switch (RBTree.minKey(buy_lvl.orders)) {
-        case (?earliest) earliest;
-        case _ {
-          buy_book := RBTree.delete(buy_book, Nat.compare, buy_p);
-          continue matching;
-        };
-      };
-      var buy_o = switch (RBTree.get(orders, Nat.compare, buy_id)) {
-        case (?found) found;
-        case _ {
-          let buy_os = RBTree.delete(buy_lvl.orders, Nat.compare, buy_id);
-          buy_book := OrderBook.savePrice(buy_book, buy_p, { buy_lvl with orders = buy_os });
-          continue matching;
-        };
-      };
-
-      // for ((sell_id, _) in RBTree.entries(sell_lvl.orders))
-      // for ((buy_id));
-
+    let wallet = switch (Value.metaPrincipal(meta, O.WALLET)) {
+      case (?found) actor (Principal.toText(found)) : Wallet.Canister;
+      case _ return Error.text("Metadata `" # O.WALLET # "` not properly set");
     };
+    let env = switch (await* OrderBook.getEnvironment(meta)) {
+      case (#Err err) return #Err err;
+      case (#Ok ok) ok;
+    };
+    meta := env.meta;
+    var sell_p = switch (RBTree.min(sell_book)) {
+      case (?(key, lvl)) ({ key; lvl });
+      case _ return Error.text("Sell book is empty");
+    };
+    var buy_p = switch (RBTree.max(buy_book)) {
+      case (?(key, lvl)) ({ key; lvl });
+      case _ return Error.text("Buy book is empty");
+    };
+    let fee_collector = getFeeCollector();
+    label matching while (true) {
+      let move_sell = switch (await* match0(wallet, fee_collector, env, (sell_p.key, sell_p.lvl), (buy_p.key, buy_p.lvl))) {
+        case (#Rest) break matching;
+        case (#Traded(#Err err)) return #Err(#TradeFailed err);
+        case (#Traded(#Ok ok)) return #Ok ok;
+        case (#NextSell) true;
+        case (#NextBuy) false;
+      };
+      if (move_sell) sell_p := switch (RBTree.right(sell_book, Nat.compare, sell_p.key + 1)) {
+        case (?(key, lvl)) ({ key; lvl });
+        case _ break matching;
+      } else if (buy_p.key > 0) buy_p := switch (RBTree.left(buy_book, Nat.compare, buy_p.key - 1)) {
+        case (?(key, lvl)) ({ key; lvl });
+        case _ break matching;
+      } else break matching;
+    };
+    // label trimming while true {
 
-    // switch (RBTree.min(sell_book), RBTree.max(buy_book)) {
-    //   case (?(min_sell_price, min_sell), ?(max_buy_price, max_buy)) if (min_sell_price <= max_buy_price) switch (RBTree.minKey(min_sell.orders), RBTree.minKey(max_buy.orders)) {
-    //     case (?earliest_sell, ?earliest_buy) ignore match(min_sell_price, min_sell, earliest_sell, max_buy_price, max_buy, earliest_buy);
-    //     case _ trim();
-    //   } else trim();
-    //   case _ trim();
     // };
-    #Ok 1;
+    // label archiving while true {
+
+    // };
+    Error.text("No job available");
   };
 
   func getFeeCollector() : Account.Pair = {
@@ -477,42 +477,9 @@ shared (install) persistent actor class Canister(
     };
   };
 
-  func match0() : async* () {
-    let wallet = switch (Value.metaPrincipal(meta, O.WALLET)) {
-      case (?found) actor (Principal.toText(found)) : Wallet.Canister;
-      case _ return; // Error.text("Metadata `" # O.WALLET # "` not properly set");
-    };
-    let env = switch (await* OrderBook.getEnvironment(meta)) {
-      case (#Err err) return;
-      case (#Ok ok) ok;
-    };
-    meta := env.meta;
-    var sell_p = switch (RBTree.min(sell_book)) {
-      case (?(key, lvl)) ({ key; lvl });
-      case _ return;
-    };
-    var buy_p = switch (RBTree.max(buy_book)) {
-      case (?(key, lvl)) ({ key; lvl });
-      case _ return;
-    };
-    label matching while (true) {
-      let move_sell = switch (await* match1(wallet, getFeeCollector(), env, (sell_p.key, sell_p.lvl), (buy_p.key, buy_p.lvl))) {
-        case (#Return) return;
-        case (#NextSell) true;
-        case (#NextBuy) false;
-      };
-      if (move_sell) sell_p := switch (RBTree.right(sell_book, Nat.compare, sell_p.key + 1)) {
-        case (?(key, lvl)) ({ key; lvl });
-        case _ return;
-      } else if (buy_p.key == 0) return else buy_p := switch (RBTree.left(buy_book, Nat.compare, buy_p.key - 1)) {
-        case (?(key, lvl)) ({ key; lvl });
-        case _ return;
-      };
-    };
-  };
-
-  func match1(wallet : Wallet.Canister, fee_collector : Account.Pair, env : O.Environment, (sell_p : Nat, _sell_lvl : O.Price), (buy_p : Nat, _buy_lvl : O.Price)) : async* {
-    #Return;
+  func match0(wallet : Wallet.Canister, fee_collector : Account.Pair, env : O.Environment, (sell_p : Nat, _sell_lvl : O.Price), (buy_p : Nat, _buy_lvl : O.Price)) : async* {
+    #Rest;
+    #Traded : W.ExecuteRes;
     #NextSell;
     #NextBuy;
   } {
@@ -535,8 +502,9 @@ shared (install) persistent actor class Canister(
       };
     };
     label matching while true {
-      let move_buy = switch (await* match2(wallet, fee_collector, env, (sell_id, sell_p, sell_lvl), (buy_id, buy_p, buy_lvl))) {
-        case (#Return) return #Return;
+      let move_buy = switch (await* match1(wallet, fee_collector, env, (sell_id, sell_p, sell_lvl), (buy_id, buy_p, buy_lvl))) {
+        case (#Rest) return #Rest;
+        case (#Traded res) return #Traded res;
         case (#SameId order) true;
         case (#SameOwner) true;
         case (#WrongPrice order) true;
@@ -569,11 +537,12 @@ shared (install) persistent actor class Canister(
         case _ return #NextSell;
       };
     };
-    #Return;
+    #Rest;
   };
 
-  func match2(wallet : Wallet.Canister, fee_collector : Account.Pair, env : O.Environment, (sell_id : Nat, sell_p : Nat, _sell_lvl : O.Price), (buy_id : Nat, buy_p : Nat, _buy_lvl : O.Price)) : async* {
-    #Return;
+  func match1(wallet : Wallet.Canister, fee_collector : Account.Pair, env : O.Environment, (sell_id : Nat, sell_p : Nat, _sell_lvl : O.Price), (buy_id : Nat, buy_p : Nat, _buy_lvl : O.Price)) : async* {
+    #Rest;
+    #Traded : W.ExecuteRes;
     #Missing : Bool;
     #WrongSide : O.Order;
     #WrongPrice : O.Order;
@@ -613,7 +582,7 @@ shared (install) persistent actor class Canister(
     let p = if (sell_maker) sell_o.price else buy_o.price;
     if (sell_remain * p < env.min_quote_amount) return #Close(false, #Filled, sell_o);
     if (buy_remain * p < env.min_quote_amount) return #Close(true, #Filled, buy_o);
-    if (sell_o.price > buy_o.price) return #Return;
+    if (sell_o.price > buy_o.price) return #Rest;
 
     let sell_sub = Account.denull(sell_o.subaccount);
     let buy_sub = Account.denull(buy_o.subaccount);
@@ -622,7 +591,6 @@ shared (install) persistent actor class Canister(
     let amount = Nat.min(sell_remain, buy_remain);
     let amount_q = amount * p;
 
-    // lock everything from here
     sell_o := { sell_o with base = OrderBook.lockAmount(sell_o.base, amount) };
     buy_o := { buy_o with base = OrderBook.lockAmount(buy_o.base, amount) };
 
@@ -668,7 +636,7 @@ shared (install) persistent actor class Canister(
     let quote_i = {
       account = buy_o;
       asset = #ICRC1 { canister_id = env.quote_token_id };
-      amount;
+      amount = amount_q;
       action = #Unlock;
     };
     let instructions_buff = Buffer.Buffer<W.Instruction>(6);
@@ -687,34 +655,43 @@ shared (install) persistent actor class Canister(
       action = #Transfer { to = fee_collector };
     });
     let instructions = Buffer.toArray(instructions_buff);
-    let execute = await wallet.wallet_execute(instructions);
-    sell_o := { sell_o with base = OrderBook.unlockAmount(sell_o.base, amount) };
-    buy_o := { buy_o with base = OrderBook.unlockAmount(buy_o.base, amount) };
-    base := OrderBook.unlockAmount(base, amount);
-    quote := OrderBook.unlockAmount(quote, amount_q);
+    func unlockMatch() {
+      sell_o := {
+        sell_o with base = OrderBook.unlockAmount(sell_o.base, amount)
+      };
+      buy_o := { buy_o with base = OrderBook.unlockAmount(buy_o.base, amount) };
+      base := OrderBook.unlockAmount(base, amount);
+      quote := OrderBook.unlockAmount(quote, amount_q);
 
-    sell_lvl := OrderBook.getPrice(sell_book, sell_p);
-    sell_lvl := OrderBook.priceUnlock(sell_lvl, amount);
-    buy_lvl := OrderBook.getPrice(buy_book, buy_p);
-    buy_lvl := OrderBook.priceUnlock(buy_lvl, amount);
+      sell_lvl := OrderBook.getPrice(sell_book, sell_p);
+      sell_lvl := OrderBook.priceUnlock(sell_lvl, amount);
+      buy_lvl := OrderBook.getPrice(buy_book, buy_p);
+      buy_lvl := OrderBook.priceUnlock(buy_lvl, amount);
 
-    seller := getUser(sell_o.owner);
-    seller_sub := OrderBook.getSubaccount(seller, sell_sub);
-    seller_sub := OrderBook.subaccUnlockBase(seller_sub, amount);
-    buyer := getUser(buy_o.owner);
-    buyer_sub := OrderBook.getSubaccount(buyer, buy_sub);
-    buyer_sub := OrderBook.subaccUnlockQuote(buyer_sub, amount_q);
-
-    switch execute {
+      seller := getUser(sell_o.owner);
+      seller_sub := OrderBook.getSubaccount(seller, sell_sub);
+      seller_sub := OrderBook.subaccUnlockBase(seller_sub, amount);
+      buyer := getUser(buy_o.owner);
+      buyer_sub := OrderBook.getSubaccount(buyer, buy_sub);
+      buyer_sub := OrderBook.subaccUnlockQuote(buyer_sub, amount_q);
+    };
+    try switch (await wallet.wallet_execute(instructions)) {
       case (#Err err) {
-
+        unlockMatch();
         saveMatch();
+        #Traded(#Err err);
       };
       case (#Ok ok) {
-        sell_o := {
-          sell_o with base = OrderBook.fillAmount(sell_o.base, amount)
-        };
-        buy_o := { buy_o with base = OrderBook.fillAmount(buy_o.base, amount) };
+        unlockMatch();
+        let sell = { id = sell_id; base = amount; fee_quote = seller_fee };
+        let buy = { id = buy_id; quote = amount_q; fee_base = buyer_fee };
+        let trade = { sell; buy; at = env.now; price = p; proof = ok };
+        let new_trade = trade_id;
+        trade_id += 1;
+        sell_o := OrderBook.fillOrder(sell_o, amount, new_trade);
+        buy_o := OrderBook.fillOrder(buy_o, amount, new_trade);
+        trades := RBTree.insert(trades, Nat.compare, new_trade, trade);
+
         base := OrderBook.fillAmount(base, amount);
         quote := OrderBook.fillAmount(quote, amount_q);
         sell_lvl := OrderBook.priceFill(sell_lvl, amount);
@@ -722,9 +699,14 @@ shared (install) persistent actor class Canister(
         seller_sub := OrderBook.subaccFillBase(seller_sub, amount);
         buyer_sub := OrderBook.subaccFillQuote(buyer_sub, amount_q);
         saveMatch();
+        // todo: blockify
+        #Traded(#Ok new_trade);
       };
+    } catch (err) {
+      unlockMatch();
+      saveMatch();
+      #Traded(#Err(Error.convert(err)));
     };
-    #Return;
   };
 
   func trim() {

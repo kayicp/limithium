@@ -128,6 +128,10 @@ module {
   public func subaccFillBase(s : O.Subaccount, n : Nat) : O.Subaccount = {
     s with base = fillAmount(s.base, n);
   };
+  public func fillOrder(o : O.Order, amount : Nat, trade_id : Nat) : O.Order = {
+    o with base = fillAmount(o.base, amount);
+    trades = RBTree.insert(o.trades, Nat.compare, trade_id, ());
+  };
 
   public func getExpiries(e : O.Expiries, t : Nat64) : ID.Many<()> = switch (RBTree.get(e, Nat64.compare, t)) {
     case (?found) found;
