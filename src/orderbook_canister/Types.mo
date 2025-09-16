@@ -27,10 +27,10 @@ module {
   public let MAX_ORDER_EXPIRY = "orderbook:max_order_expiry";
   public let MIN_ORDER_EXPIRY = "orderbook:min_order_expiry";
 
-  public let PLACE_FEE_QUOTE = "orderbook:place_fee_quote";
-  public let PLACE_FEE_BASE = "orderbook:place_fee_base";
-  public let CANCEL_FEE_QUOTE = "orderbook:cancel_fee_quote";
-  public let CANCEL_FEE_BASE = "orderbook:cancel_fee_base";
+  public let PLACE_FEE_QUOTE = "orderbook:open_fee_quote";
+  public let PLACE_FEE_BASE = "orderbook:open_fee_base";
+  public let CANCEL_FEE_QUOTE = "orderbook:close_fee_quote";
+  public let CANCEL_FEE_BASE = "orderbook:close_fee_base";
   // todo: not all need "icrc1_icrc1_" prefix
   public let TX_WINDOW = "orderbook:tx_window";
   public let PERMITTED_DRIFT = "orderbook:permitted_drift";
@@ -52,6 +52,7 @@ module {
   };
   public type OrderClosed = {
     at : Nat64;
+    proof : ?Nat;
     reason : {
       #Filled;
       #Expired;
@@ -142,7 +143,17 @@ module {
   public type RunArg = { subaccount : ?Blob };
   public type RunErr = {
     #GenericError : Error.Type;
-    #TradeFailed : W.ExecuteErr;
+    #TradeFailed : {
+      buy : Nat;
+      sell : Nat;
+      instructions : [W.Instruction];
+      error : W.ExecuteErr;
+    };
+    #CloseFailed : {
+      order : Nat;
+      instructions : [W.Instruction];
+      error : W.ExecuteErr;
+    };
   };
   public type RunRes = Result.Type<Nat, RunErr>;
 
@@ -162,6 +173,7 @@ module {
     quote_token_id : Principal;
     taker_fee_numer : Nat;
     now : Nat64;
+    ttl : Nat64;
   };
 
   public type ArgType = {

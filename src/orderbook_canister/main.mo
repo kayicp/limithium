@@ -221,22 +221,14 @@ shared (install) persistent actor class Canister(
     let max_batch = Value.getNat(meta, O.MAX_ORDER_BATCH, 0);
     if (max_batch > 0 and arg.order_ids.size() > max_batch) return #Err(#BatchTooLarge { batch_size = arg.order_ids.size(); maximum_batch_size = max_batch });
 
-    let min_ttl = Time64.DAYS(1);
-    var ttl = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, O.TTL, 0)));
-    if (ttl < min_ttl) {
-      ttl := min_ttl;
-      meta := Value.setNat(meta, O.TTL, ?86400);
+    let env = switch (await* OrderBook.getEnvironment(meta)) {
+      case (#Err err) return #Err err;
+      case (#Ok ok) ok;
     };
-    let base_token_id = switch (Value.metaPrincipal(meta, O.BASE_TOKEN)) {
-      case (?found) found;
-      case _ return Error.text("Metadata `" # O.BASE_TOKEN # "` is not properly set");
-    };
-    let quote_token_id = switch (Value.metaPrincipal(meta, O.QUOTE_TOKEN)) {
-      case (?found) found;
-      case _ return Error.text("Metadata `" # O.QUOTE_TOKEN # "` is not properly set");
-    };
-    let fee_base = Value.getNat(meta, O.PLACE_FEE_BASE, 0);
-    let fee_quote = Value.getNat(meta, O.PLACE_FEE_QUOTE, 0);
+    meta := env.meta;
+
+    let fee_base = Value.getNat(meta, O.CANCEL_FEE_BASE, 0);
+    let fee_quote = Value.getNat(meta, O.CANCEL_FEE_QUOTE, 0);
 
     var user = getUser(caller);
     let arg_subacc = Account.denull(arg.subaccount);
@@ -322,12 +314,12 @@ shared (install) persistent actor class Canister(
     };
     user := OrderBook.saveSubaccount(user, arg_subacc, subacc);
     user := saveUser(caller, user);
-
+    // todo: dont execute if both is 0
     let instructions_buff = Buffer.Buffer<W.Instruction>(4);
     if (lbase > 0) {
       var instruction = {
         account = user_acct;
-        asset = #ICRC1 { canister_id = base_token_id };
+        asset = #ICRC1 { canister_id = env.base_token_id };
         amount = lbase;
         action = #Unlock;
       };
@@ -340,7 +332,7 @@ shared (install) persistent actor class Canister(
     if (lquote > 0) {
       var instruction = {
         account = user_acct;
-        asset = #ICRC1 { canister_id = quote_token_id };
+        asset = #ICRC1 { canister_id = env.quote_token_id };
         amount = lquote;
         action = #Unlock;
       };
@@ -358,7 +350,7 @@ shared (install) persistent actor class Canister(
     user := getUser(caller);
     subacc := OrderBook.getSubaccount(user, arg_subacc);
 
-    // let (base_token, quote_token) = (ICRC1Token.genActor(base_token_id), ICRC1Token.genActor(quote_token_id));
+    // todo: blockify
 
     #Ok 1;
   };
@@ -447,8 +439,8 @@ shared (install) persistent actor class Canister(
     label matching while (true) {
       let move_sell = switch (await* match0(wallet, fee_collector, env, (sell_p.key, sell_p.lvl), (buy_p.key, buy_p.lvl))) {
         case (#Rest) break matching;
-        case (#Traded(#Err err)) return #Err(#TradeFailed err);
-        case (#Traded(#Ok ok)) return #Ok ok;
+        case (#SwapExecuted(#Err err)) return #Err(#TradeFailed err);
+        case (#SwapExecuted(#Ok ok)) return #Ok ok;
         case (#NextSell) true;
         case (#NextBuy) false;
       };
@@ -479,7 +471,7 @@ shared (install) persistent actor class Canister(
 
   func match0(wallet : Wallet.Canister, fee_collector : Account.Pair, env : O.Environment, (sell_p : Nat, _sell_lvl : O.Price), (buy_p : Nat, _buy_lvl : O.Price)) : async* {
     #Rest;
-    #Traded : W.ExecuteRes;
+    #SwapExecuted : W.ExecuteRes;
     #NextSell;
     #NextBuy;
   } {
@@ -504,7 +496,7 @@ shared (install) persistent actor class Canister(
     label matching while true {
       let move_buy = switch (await* match1(wallet, fee_collector, env, (sell_id, sell_p, sell_lvl), (buy_id, buy_p, buy_lvl))) {
         case (#Rest) return #Rest;
-        case (#Traded res) return #Traded res;
+        case (#SwapExecuted res) return #SwapExecuted res;
         case (#SameId order) true;
         case (#SameOwner) true;
         case (#WrongPrice order) true;
@@ -526,6 +518,11 @@ shared (install) persistent actor class Canister(
           is_buy;
         };
         case (#Close(is_buy, reason, order)) {
+          if (is_buy) {
+
+          } else {
+
+          };
           is_buy;
         };
       };
@@ -540,9 +537,112 @@ shared (install) persistent actor class Canister(
     #Rest;
   };
 
+  func close(reason : { #Expired; #Filled }, oid : Nat, _o : O.Order, _lvl : O.Price, remain : Nat, wallet : Wallet.Canister, env : O.Environment) : async* {
+    #Called : Result.Type<Nat, { #GenericError : Error.Type; #ExecutionFailed : { order : Nat; instructions : [W.Instruction]; error : W.ExecuteErr } }>;
+    #Next : Bool;
+  } {
+    var o = _o;
+    var lvl = _lvl;
+    var user = getUser(o.owner);
+    let subacc_key = Account.denull(o.subaccount);
+    var subacc = OrderBook.getSubaccount(user, subacc_key);
+    func execClose(proof : ?Nat) {
+      o := { o with closed = ?{ at = env.now; reason; proof } };
+      lvl := { lvl with orders = RBTree.delete(lvl.orders, Nat.compare, oid) };
+      if (o.is_buy) {
+        subacc := {
+          subacc with buys = RBTree.delete(subacc.buys, Nat.compare, o.price)
+        };
+      } else {
+        subacc := {
+          subacc with sells = RBTree.delete(subacc.sells, Nat.compare, o.price)
+        };
+      };
+    };
+    func saveClose(expiry_too : Bool) {
+      orders := RBTree.insert(orders, Nat.compare, oid, o);
+      if (o.is_buy) buy_book := OrderBook.savePrice(buy_book, o.price, lvl) else sell_book := OrderBook.savePrice(sell_book, o.price, lvl);
+      user := OrderBook.saveSubaccount(user, subacc_key, subacc);
+      user := saveUser(o.owner, user);
+      if (expiry_too) {
+        var expiries = OrderBook.getExpiries(orders_by_expiry, o.expires_at);
+        expiries := RBTree.delete(expiries, Nat.compare, oid);
+        orders_by_expiry := OrderBook.saveExpiries(orders_by_expiry, o.expires_at, expiries);
+
+        let o_ttl = o.expires_at + env.ttl;
+        expiries := OrderBook.getExpiries(orders_by_expiry, o_ttl);
+        expiries := RBTree.insert(expiries, Nat.compare, oid, ());
+        orders_by_expiry := OrderBook.saveExpiries(orders_by_expiry, o_ttl, expiries);
+      };
+    };
+    if (remain > 0) {
+      o := { o with base = OrderBook.lockAmount(o.base, remain) };
+      lvl := OrderBook.priceLock(lvl, remain);
+      let (cid, amt) = if (o.is_buy) {
+        let remain_q = remain * o.price;
+        quote := OrderBook.lockAmount(quote, remain_q);
+        subacc := OrderBook.subaccLockQuote(subacc, remain_q);
+        (env.quote_token_id, remain_q);
+      } else {
+        base := OrderBook.lockAmount(base, remain);
+        subacc := OrderBook.subaccLockBase(subacc, remain);
+        (env.base_token_id, remain);
+      };
+
+      saveClose(false);
+
+      func unlockClose() {
+        user := getUser(o.owner);
+        subacc := OrderBook.getSubaccount(user, subacc_key);
+        o := { o with base = OrderBook.unlockAmount(o.base, remain) };
+        if (o.is_buy) {
+          lvl := OrderBook.getPrice(buy_book, o.price);
+          lvl := OrderBook.priceUnlock(lvl, remain);
+          quote := OrderBook.unlockAmount(quote, amt);
+          subacc := OrderBook.subaccUnlockQuote(subacc, amt);
+        } else {
+          lvl := OrderBook.getPrice(sell_book, o.price);
+          lvl := OrderBook.priceUnlock(lvl, remain);
+          base := OrderBook.unlockAmount(base, amt);
+          subacc := OrderBook.subaccUnlockBase(subacc, amt);
+        };
+      };
+
+      let instruction = {
+        account = o;
+        asset = #ICRC1 { canister_id = cid };
+        amount = amt;
+        action = #Unlock;
+      };
+      try switch (await wallet.wallet_execute([instruction])) {
+        case (#Err err) {
+          unlockClose();
+          saveClose(false);
+          //  return #Executed(#ExecutionFailed { order = oid; instructions = [instruction]; error = err; });
+        };
+        case (#Ok ok) {
+          unlockClose();
+          execClose(?ok);
+          saveClose(true);
+        };
+      } catch (err) {
+        unlockClose();
+        saveClose(false);
+        // return
+      };
+      #CloseExecuted 0;
+    } else {
+      execClose(null);
+      saveClose(true);
+
+      // todo: blockify
+      #Next(o.is_buy);
+    };
+  };
+
   func match1(wallet : Wallet.Canister, fee_collector : Account.Pair, env : O.Environment, (sell_id : Nat, sell_p : Nat, _sell_lvl : O.Price), (buy_id : Nat, buy_p : Nat, _buy_lvl : O.Price)) : async* {
     #Rest;
-    #Traded : W.ExecuteRes;
+    #SwapExecuted : W.ExecuteRes;
     #Missing : Bool;
     #WrongSide : O.Order;
     #WrongPrice : O.Order;
@@ -550,7 +650,7 @@ shared (install) persistent actor class Canister(
     #SameOwner;
     #Next : Bool;
     #Closed : Bool;
-    #Close : (Bool, { #Expired; #Filled }, O.Order);
+    #Close : ({ #Expired; #Filled }, O.Order, Nat);
   } {
     var sell_o = switch (RBTree.get(orders, Nat.compare, sell_id)) {
       case (?found) found;
@@ -561,10 +661,10 @@ shared (install) persistent actor class Canister(
     if (sell_o.is_buy) return #WrongSide sell_o;
     if (sell_o.price != sell_p) return #WrongPrice sell_o;
     if (sell_o.closed != null) return #Closed false;
-    if (sell_o.expires_at < env.now) return #Close(false, #Expired, sell_o);
     if (sell_o.base.locked > 0) return #Next false;
-    let sell_remain = if (sell_o.base.initial > sell_o.base.filled) sell_o.base.initial - sell_o.base.filled else return #Close(false, #Filled, sell_o);
-    if (sell_remain < env.min_base_amount) return #Close(false, #Filled, sell_o);
+    let sell_remain = if (sell_o.base.initial > sell_o.base.filled) sell_o.base.initial - sell_o.base.filled else 0;
+    if (sell_o.expires_at < env.now) return #Close(#Expired, sell_o, sell_remain);
+    if (sell_remain < env.min_base_amount) return #Close(#Filled, sell_o, sell_remain);
 
     var buy_o = switch (RBTree.get(orders, Nat.compare, buy_id)) {
       case (?found) found;
@@ -573,32 +673,32 @@ shared (install) persistent actor class Canister(
     if (not buy_o.is_buy) return #WrongSide buy_o;
     if (buy_o.price != buy_p) return #WrongPrice buy_o;
     if (buy_o.closed != null) return #Closed true;
-    if (buy_o.expires_at < env.now) return #Close(true, #Expired, buy_o);
     if (buy_o.base.locked > 0) return #Next true;
-    let buy_remain = if (buy_o.base.initial > buy_o.base.filled) buy_o.base.initial - buy_o.base.filled else return #Close(true, #Filled, buy_o);
-    if (buy_remain < env.min_base_amount) return #Close(true, #Filled, buy_o);
+    let buy_remain = if (buy_o.base.initial > buy_o.base.filled) buy_o.base.initial - buy_o.base.filled else 0;
+    if (buy_o.expires_at < env.now) return #Close(#Expired, buy_o, buy_remain);
+    if (buy_remain < env.min_base_amount) return #Close(#Filled, buy_o, buy_remain);
 
     let sell_maker = sell_id < buy_id;
     let p = if (sell_maker) sell_o.price else buy_o.price;
-    if (sell_remain * p < env.min_quote_amount) return #Close(false, #Filled, sell_o);
-    if (buy_remain * p < env.min_quote_amount) return #Close(true, #Filled, buy_o);
+    if (sell_remain * p < env.min_quote_amount) return #Close(#Filled, sell_o, sell_remain);
+    if (buy_remain * p < env.min_quote_amount) return #Close(#Filled, buy_o, buy_remain);
     if (sell_o.price > buy_o.price) return #Rest;
 
     let sell_sub = Account.denull(sell_o.subaccount);
     let buy_sub = Account.denull(buy_o.subaccount);
     if (sell_o.owner == buy_o.owner and sell_sub == buy_sub) return #SameOwner;
 
-    let amount = Nat.min(sell_remain, buy_remain);
-    let amount_q = amount * p;
-
     sell_o := { sell_o with base = OrderBook.lockAmount(sell_o.base, amount) };
     buy_o := { buy_o with base = OrderBook.lockAmount(buy_o.base, amount) };
 
-    base := OrderBook.lockAmount(base, amount);
-    quote := OrderBook.lockAmount(quote, amount_q);
-
     var sell_lvl = OrderBook.priceLock(_sell_lvl, amount);
     var buy_lvl = OrderBook.priceLock(_buy_lvl, amount);
+
+    let amount = Nat.min(sell_remain, buy_remain);
+    let amount_q = amount * p;
+
+    base := OrderBook.lockAmount(base, amount);
+    quote := OrderBook.lockAmount(quote, amount_q);
 
     var seller = getUser(sell_o.owner);
     var seller_sub = OrderBook.getSubaccount(seller, sell_sub);
@@ -679,7 +779,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) {
         unlockMatch();
         saveMatch();
-        #Traded(#Err err);
+        #SwapExecuted(#Err err);
       };
       case (#Ok ok) {
         unlockMatch();
@@ -700,12 +800,12 @@ shared (install) persistent actor class Canister(
         buyer_sub := OrderBook.subaccFillQuote(buyer_sub, amount_q);
         saveMatch();
         // todo: blockify
-        #Traded(#Ok new_trade);
+        #SwapExecuted(#Ok new_trade);
       };
     } catch (err) {
       unlockMatch();
       saveMatch();
-      #Traded(#Err(Error.convert(err)));
+      #SwapExecuted(#Err(Error.convert(err)));
     };
   };
 

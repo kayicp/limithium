@@ -230,6 +230,12 @@ module {
       default_expiry := (min_expiry + max_expiry) / 2;
       meta := Value.setNat(meta, O.DEFAULT_ORDER_EXPIRY, ?(Nat64.toNat(default_expiry / 1_000_000_000)));
     };
+    let min_ttl = Time64.DAYS(1);
+    var ttl = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, O.TTL, 0)));
+    if (ttl < min_ttl) {
+      ttl := min_ttl;
+      meta := Value.setNat(meta, O.TTL, ?86400);
+    };
     let now = Time64.nanos();
     #Ok {
       meta;
@@ -243,10 +249,11 @@ module {
       min_base_amount;
       min_quote_amount;
       min_price;
-      now;
       max_expires_at = now + max_expiry;
       min_expires_at = now + min_expiry;
       default_expires_at = now + default_expiry;
+      now;
+      ttl;
     };
   };
 };
