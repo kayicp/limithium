@@ -26,7 +26,6 @@ module {
       base = newAmount(0);
       buys = RBTree.empty();
       quote = newAmount(0);
-      trades = ID.empty();
     });
   };
   public func saveSubaccount(u : O.User, subacc_id : Blob, subacc : O.Subaccount) : O.User = ({
@@ -45,9 +44,9 @@ module {
     locked = a.locked + b.locked;
   };
   public func decAmount(a : O.Amount, b : O.Amount) : O.Amount = {
-    initial = a.initial - b.initial;
-    filled = a.filled - b.filled;
-    locked = a.locked - b.locked;
+    initial = if (a.initial > b.initial) a.initial - b.initial else 0;
+    filled = if (a.filled > b.filled) a.filled - b.filled else 0;
+    locked = if (a.locked > b.locked) a.locked - b.locked else 0;
   };
   public func mulAmount(a : O.Amount, b : Nat) : O.Amount = {
     initial = a.initial * b;
@@ -74,27 +73,30 @@ module {
     trades = ID.empty();
     closed = null;
   };
-  public func getPrice(book : O.Book, price : Nat) : O.Price = switch (RBTree.get(book, Nat.compare, price)) {
+  public func getLevel(book : O.Book, price : Nat) : O.Price = switch (RBTree.get(book, Nat.compare, price)) {
     case (?found) found;
     case _ ({
       base = newAmount(0);
       orders = RBTree.empty();
     });
   };
-  public func priceNewOrder(p : O.Price, oid : Nat, o : O.Order) : O.Price = ({
+  public func levelNewOrder(p : O.Price, oid : Nat, o : O.Order) : O.Price = ({
     base = incAmount(p.base, o.base);
     orders = ID.insert(p.orders, oid, ());
   });
-  public func priceLock(p : O.Price, l : Nat) : O.Price = ({
+  public func levelLock(p : O.Price, l : Nat) : O.Price = ({
     p with base = lockAmount(p.base, l)
   });
-  public func priceUnlock(p : O.Price, l : Nat) : O.Price = ({
+  public func levelUnlock(p : O.Price, l : Nat) : O.Price = ({
     p with base = unlockAmount(p.base, l)
   });
-  public func priceFill(p : O.Price, l : Nat) : O.Price = ({
-    p with base = fillAmount(p.base, l)
+  public func levelFill(p : O.Price, l : Nat) : O.Price = ({
+    p with base = fillAmount(p.base, l);
   });
-  public func savePrice(b : O.Book, price : Nat, p : O.Price) : O.Book = if (RBTree.size(p.orders) > 0) {
+  public func levelDeleteOrder(p : O.Price, oid : Nat) : O.Price = ({
+    p with orders = RBTree.delete(p.orders, Nat.compare, oid);
+  });
+  public func saveLevel(b : O.Book, price : Nat, p : O.Price) : O.Book = if (RBTree.size(p.orders) > 0) {
     RBTree.insert(b, Nat.compare, price, p);
   } else RBTree.delete(b, Nat.compare, price);
 
@@ -131,6 +133,12 @@ module {
   public func fillOrder(o : O.Order, amount : Nat, trade_id : Nat) : O.Order = {
     o with base = fillAmount(o.base, amount);
     trades = RBTree.insert(o.trades, Nat.compare, trade_id, ());
+  };
+  public func lockOrder(o : O.Order, amount : Nat) : O.Order = {
+    o with base = lockAmount(o.base, amount)
+  };
+  public func unlockOrder(o : O.Order, amount : Nat) : O.Order = {
+    o with base = unlockAmount(o.base, amount)
   };
 
   public func getExpiries(e : O.Expiries, t : Nat64) : ID.Many<()> = switch (RBTree.get(e, Nat64.compare, t)) {

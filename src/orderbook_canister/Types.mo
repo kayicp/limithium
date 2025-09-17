@@ -77,7 +77,6 @@ module {
     base : Amount;
     buys : RBTree.Type<(price : Nat), (order : Nat)>;
     quote : Amount;
-    trades : ID.Many<()>;
   };
   public type User = {
     subaccs : RBTree.Type<Blob, Subaccount>;
@@ -123,7 +122,7 @@ module {
 
   public type CancelArg = {
     subaccount : ?Blob;
-    order_ids : [Nat];
+    orders : [Nat];
     fee : ?Fee;
     memo : ?Blob;
   };
