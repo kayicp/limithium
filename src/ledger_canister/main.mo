@@ -10,7 +10,7 @@ import Blob "mo:base/Blob";
 import Nat "mo:base/Nat";
 import Iter "mo:base/Iter";
 import Time64 "../util/motoko/Time64";
-import Wallet "Wallet";
+import Ledger "Ledger";
 import Result "../util/motoko/Result";
 
 // todo: lets not use user/subacc id mapping, store everything as-is
@@ -76,11 +76,11 @@ shared (install) persistent actor class Canister(
     };
     var user = getUser(caller);
     let arg_subacc = Account.denull(arg.subaccount);
-    var subacc = Wallet.getSubaccount(user, arg_subacc);
-    var bal = Wallet.getICRCBalance(subacc, arg.canister_id);
+    var subacc = Ledger.getSubaccount(user, arg_subacc);
+    var bal = Ledger.getICRCBalance(subacc, arg.canister_id);
     bal := { bal with unlocked = bal.unlocked + arg.amount };
-    subacc := Wallet.saveICRCBalance(subacc, arg.canister_id, bal);
-    user := Wallet.saveSubaccount(user, arg_subacc, subacc);
+    subacc := Ledger.saveICRCBalance(subacc, arg.canister_id, bal);
+    user := Ledger.saveSubaccount(user, arg_subacc, subacc);
     user := saveUser(caller, user);
 
     // todo: take fee, but later since fee is zero
@@ -106,8 +106,8 @@ shared (install) persistent actor class Canister(
 
     var user = getUser(caller);
     let arg_subacc = Account.denull(arg.subaccount);
-    var subacc = Wallet.getSubaccount(user, arg_subacc);
-    var bal = Wallet.getICRCBalance(subacc, arg.canister_id);
+    var subacc = Ledger.getSubaccount(user, arg_subacc);
+    var bal = Ledger.getICRCBalance(subacc, arg.canister_id);
     let to_lock = arg.amount + token.withdrawal_fee;
     if (bal.unlocked < to_lock) return #Err(#InsufficientBalance { balance = bal.unlocked });
 
@@ -128,8 +128,8 @@ shared (install) persistent actor class Canister(
       unlocked = bal.unlocked - to_lock;
       locked = bal.locked + to_lock;
     }; // lock to prevent double spending
-    subacc := Wallet.saveICRCBalance(subacc, arg.canister_id, bal);
-    user := Wallet.saveSubaccount(user, arg_subacc, subacc);
+    subacc := Ledger.saveICRCBalance(subacc, arg.canister_id, bal);
+    user := Ledger.saveSubaccount(user, arg_subacc, subacc);
     user := saveUser(caller, user);
     let xfer_arg = {
       amount = arg.amount;
@@ -141,15 +141,15 @@ shared (install) persistent actor class Canister(
     };
     let xfer_res = await token_canister.icrc1_transfer(xfer_arg);
     user := getUser(caller);
-    subacc := Wallet.getSubaccount(user, arg_subacc);
-    bal := Wallet.getICRCBalance(subacc, arg.canister_id);
+    subacc := Ledger.getSubaccount(user, arg_subacc);
+    bal := Ledger.getICRCBalance(subacc, arg.canister_id);
     bal := { bal with locked = bal.locked - to_lock }; // release lock
     switch xfer_res {
       case (#Err _) bal := { bal with unlocked = bal.unlocked + to_lock }; // recover fund
       case _ {};
     };
-    subacc := Wallet.saveICRCBalance(subacc, arg.canister_id, bal);
-    user := Wallet.saveSubaccount(user, arg_subacc, subacc);
+    subacc := Ledger.saveICRCBalance(subacc, arg.canister_id, bal);
+    user := Ledger.saveSubaccount(user, arg_subacc, subacc);
     user := saveUser(caller, user);
     let xfer_id = switch xfer_res {
       case (#Err err) return #Err(#TransferFailed err);
@@ -159,12 +159,12 @@ shared (install) persistent actor class Canister(
     let this_canister = Principal.fromActor(Self);
     let canister_subaccount = Account.denull(null);
     user := getUser(this_canister); // give fee to canister
-    subacc := Wallet.getSubaccount(user, canister_subaccount);
-    bal := Wallet.getICRCBalance(subacc, arg.canister_id);
+    subacc := Ledger.getSubaccount(user, canister_subaccount);
+    bal := Ledger.getICRCBalance(subacc, arg.canister_id);
     let canister_take = token.withdrawal_fee - xfer_fee;
     bal := { bal with unlocked = bal.unlocked + canister_take };
-    subacc := Wallet.saveICRCBalance(subacc, arg.canister_id, bal);
-    user := Wallet.saveSubaccount(user, canister_subaccount, subacc);
+    subacc := Ledger.saveICRCBalance(subacc, arg.canister_id, bal);
+    user := Ledger.saveSubaccount(user, canister_subaccount, subacc);
     user := saveUser(this_canister, user);
 
     // todo: blockify
@@ -190,40 +190,40 @@ shared (install) persistent actor class Canister(
         };
       };
       let subacc = Account.denull(acc.subaccount);
-      let subacc_data = Wallet.getSubaccount(user, subacc);
+      let subacc_data = Ledger.getSubaccount(user, subacc);
       { acc with user; subacc; subacc_data };
     };
     var a = getAccount(instructions[0].account);
     var asset = instructions[0].asset;
-    var b = Wallet.getBalance(asset, a.subacc_data);
+    var b = Ledger.getBalance(asset, a.subacc_data);
     func reserve<T>(t : T) : T {
       a := {
-        a with subacc_data = Wallet.saveBalance(asset, a.subacc_data, b);
-        user = Wallet.saveSubaccount(a.user, a.subacc, a.subacc_data);
+        a with subacc_data = Ledger.saveBalance(asset, a.subacc_data, b);
+        user = Ledger.saveSubaccount(a.user, a.subacc, a.subacc_data);
       };
       lusers := RBTree.insert(lusers, Principal.compare, a.owner, a.user);
       t;
     };
     func execute(index : Nat) : W.ExecuteRes = if (instructions[index].amount > 0) switch (instructions[index].action) {
       case (#Lock) if (b.unlocked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.unlocked }) else {
-        b := Wallet.decUnlock(b, instructions[index].amount);
-        b := Wallet.incLock(b, instructions[index].amount);
+        b := Ledger.decUnlock(b, instructions[index].amount);
+        b := Ledger.incLock(b, instructions[index].amount);
         reserve(#Ok index);
       };
       case (#Unlock) if (b.locked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.locked }) else {
-        b := Wallet.decLock(b, instructions[index].amount);
-        b := Wallet.incUnlock(b, instructions[index].amount);
+        b := Ledger.decLock(b, instructions[index].amount);
+        b := Ledger.incUnlock(b, instructions[index].amount);
         reserve(#Ok index);
       };
       case (#Transfer action) {
         if (b.unlocked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.unlocked });
         if (Account.equal(instructions[index].account, action.to)) return #Err(#InvalidTransfer { index });
-        b := Wallet.decUnlock(b, instructions[index].amount);
+        b := Ledger.decUnlock(b, instructions[index].amount);
         reserve();
 
         a := getAccount(action.to);
-        b := Wallet.getBalance(asset, a.subacc_data);
-        b := Wallet.incUnlock(b, instructions[index].amount);
+        b := Ledger.getBalance(asset, a.subacc_data);
+        b := Ledger.incUnlock(b, instructions[index].amount);
         reserve(#Ok index);
       };
     } else return #Err(#ZeroAmount { index });
@@ -234,7 +234,7 @@ shared (install) persistent actor class Canister(
     for (i in Iter.range(1, instructions.size() - 1)) {
       a := getAccount(instructions[i].account);
       asset := instructions[i].asset;
-      b := Wallet.getBalance(asset, a.subacc_data);
+      b := Ledger.getBalance(asset, a.subacc_data);
       switch (execute(i)) {
         case (#Err err) return #Err err;
         case _ ();
@@ -296,8 +296,8 @@ shared (install) persistent actor class Canister(
         let end_time = now + permitted_drift;
         if (created_time > end_time) return #Err(#CreatedInFuture { ledger_time = now });
         let (map, comparer, arg) = switch opr {
-          case (#DepositICRC depo) (deposit_icrc2_dedupes, Wallet.dedupeICRC, depo);
-          case (#WithdrawICRC draw) (withdraw_icrc1_dedupes, Wallet.dedupeICRC, draw);
+          case (#DepositICRC depo) (deposit_icrc2_dedupes, Ledger.dedupeICRC, depo);
+          case (#WithdrawICRC draw) (withdraw_icrc1_dedupes, Ledger.dedupeICRC, draw);
         };
         switch (RBTree.get(map, comparer, (caller, arg))) {
           case (?duplicate_of) return #Err(#Duplicate { duplicate_of });

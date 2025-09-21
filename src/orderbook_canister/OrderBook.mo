@@ -93,9 +93,6 @@ module {
   public func levelFill(p : O.Price, l : Nat) : O.Price = ({
     p with base = fillAmount(p.base, l);
   });
-  public func levelDeleteOrder(p : O.Price, oid : Nat) : O.Price = ({
-    p with orders = RBTree.delete(p.orders, Nat.compare, oid);
-  });
   public func saveLevel(b : O.Book, price : Nat, p : O.Price) : O.Book = if (RBTree.size(p.orders) > 0) {
     RBTree.insert(b, Nat.compare, price, p);
   } else RBTree.delete(b, Nat.compare, price);

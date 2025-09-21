@@ -1,7 +1,7 @@
 import O "Types";
 import OrderBook "OrderBook";
-import Wallet "../wallet_canister/main";
-import W "../wallet_canister/Types";
+import Wallet "../ledger_canister/main";
+import W "../ledger_canister/Types";
 import Value "../util/motoko/Value";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Error "../util/motoko/Error";
@@ -229,14 +229,14 @@ shared (install) persistent actor class Canister(
 
     let fee_base = Value.getNat(meta, O.CANCEL_FEE_BASE, 0);
     let fee_quote = Value.getNat(meta, O.CANCEL_FEE_QUOTE, 0);
-
+    // todo: dont check from user first, but check from orders right away only then check from user
     var user = getUser(caller);
     let arg_subacc = Account.denull(arg.subaccount);
     var subacc = OrderBook.getSubaccount(user, arg_subacc);
     let now = Time64.nanos();
     var fbase = 0;
     var fquote = 0;
-    let self_acct = { owner = Principal.fromActor(Self); subaccount = null };
+    let fee_collector = getFeeCollector();
 
     var lorders = ID.empty<{ index : Nat; data : O.Order }>();
     // var lorders_by_expiry : O.Expiries = RBTree.empty();
@@ -326,7 +326,7 @@ shared (install) persistent actor class Canister(
       instructions_buff.add(instruction);
       if (fbase > 0) instructions_buff.add({
         instruction with amount = fbase;
-        action = #Transfer { to = self_acct };
+        action = #Transfer { to = fee_collector };
       });
     };
     if (lquote > 0) {
@@ -339,7 +339,7 @@ shared (install) persistent actor class Canister(
       instructions_buff.add(instruction);
       if (fquote > 0) instructions_buff.add({
         instruction with amount = fquote;
-        action = #Transfer { to = self_acct };
+        action = #Transfer { to = fee_collector };
       });
     };
     let instructions = Buffer.toArray(instructions_buff);
@@ -413,11 +413,39 @@ shared (install) persistent actor class Canister(
     };
   };
 
+  var max_book = null : ?Nat;
+  // var runners = RBTree.empty<Principal, Nat64>();
   public shared ({ caller }) func orderbook_run(arg : O.RunArg) : async O.RunRes {
     if (not Value.getBool(meta, O.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
     if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
+    // switch max_book {
+    //   case (?found) switch (RBTree.maxKey(orders)) {
+    //     case (?max_oid) if (max_oid == found) return await* run() else if (max_oid > found) {
+    //       return #Err(#CorruptOrderBook { max_book; max_order = max_oid });
+    //     };
+    //     case _ return Error.text("Empty orderbook");
+    //   };
+    //   case _ {
+    //     base := OrderBook.newAmount(0); // reset orderbook
+    //     quote := OrderBook.newAmount(0);
+    //     sell_book := RBTree.empty();
+    //     buy_book := RBTree.empty();
+    //   };
+    // };
 
+    Error.text("No job available");
+  };
+
+  func getFeeCollector() : Account.Pair = {
+    subaccount = null;
+    owner = switch (Value.metaPrincipal(meta, O.FEE_COLLECTOR)) {
+      case (?found) found;
+      case _ Principal.fromActor(Self);
+    };
+  };
+
+  func run() : async* O.RunRes {
     let wallet = switch (Value.metaPrincipal(meta, O.WALLET)) {
       case (?found) actor (Principal.toText(found)) : Wallet.Canister;
       case _ return Error.text("Metadata `" # O.WALLET # "` not properly set");
@@ -441,8 +469,7 @@ shared (install) persistent actor class Canister(
         case (#Rest) break matching;
         case (#Ok ok) return #Ok ok;
         case (#Err err) return #Err err;
-        case (#NextSell) true;
-        case (#NextBuy) false;
+        case (#Next next_buy) next_buy;
       };
       if (move_sell) sell_p := switch (RBTree.right(sell_book, Nat.compare, sell_p.key + 1)) {
         case (?(key, lvl)) ({ key; lvl });
@@ -461,20 +488,11 @@ shared (install) persistent actor class Canister(
     Error.text("No job available");
   };
 
-  func getFeeCollector() : Account.Pair = {
-    subaccount = null;
-    owner = switch (Value.metaPrincipal(meta, O.FEE_COLLECTOR)) {
-      case (?found) found;
-      case _ Principal.fromActor(Self);
-    };
-  };
-
   func match0(wallet : Wallet.Canister, fee_collector : Account.Pair, env : O.Environment, (sell_p : Nat, _sell_lvl : O.Price), (buy_p : Nat, _buy_lvl : O.Price)) : async* {
     #Rest;
     #Ok : Nat;
     #Err : O.RunErr;
-    #NextSell;
-    #NextBuy;
+    #Next : Bool;
   } {
     var sell_lvl = _sell_lvl;
     var buy_lvl = _buy_lvl;
@@ -483,7 +501,7 @@ shared (install) persistent actor class Canister(
       case _ {
         sell_book := RBTree.delete(sell_book, Nat.compare, sell_p);
         base := OrderBook.decAmount(base, sell_lvl.base);
-        return #NextSell;
+        return #Next false;
       };
     };
     var buy_id = switch (RBTree.minKey(buy_lvl.orders)) {
@@ -491,7 +509,7 @@ shared (install) persistent actor class Canister(
       case _ {
         buy_book := RBTree.delete(buy_book, Nat.compare, buy_p);
         quote := OrderBook.decAmount(quote, OrderBook.mulAmount(buy_lvl.base, buy_p));
-        return #NextBuy;
+        return #Next true;
       };
     };
     label matching while true {
@@ -510,10 +528,10 @@ shared (install) persistent actor class Canister(
       };
       if (move_buy) buy_id := switch (RBTree.right(buy_lvl.orders, Nat.compare, buy_id + 1)) {
         case (?(found, _)) found;
-        case _ return #NextBuy;
+        case _ return #Next true;
       } else sell_id := switch (RBTree.right(sell_lvl.orders, Nat.compare, sell_id + 1)) {
         case (?(found, _)) found;
-        case _ return #NextSell;
+        case _ return #Next true;
       };
     };
     #Rest;
@@ -628,20 +646,13 @@ shared (install) persistent actor class Canister(
     #Next : Bool;
     #Closed : Bool;
   } {
-    // todo: no silent fixing
-    var sell_lvl = _sell_lvl;
-    var buy_lvl = _buy_lvl;
+    if (sell_id == buy_id) {};
     var sell_o = switch (RBTree.get(orders, Nat.compare, sell_id)) {
       case (?found) found;
       case _ {
-        sell_lvl := OrderBook.levelDeleteOrder(sell_lvl, sell_id);
-        sell_book := OrderBook.saveLevel(sell_book, sell_p, sell_lvl);
         return #Next false; // todo: return the level too?
       };
     };
-    var seller = getUser(sell_o.owner);
-    let sell_sub = Account.denull(sell_o.subaccount);
-    var seller_sub = OrderBook.getSubaccount(seller, sell_sub);
 
     if (sell_o.is_buy) {
       return #Next false;
@@ -658,14 +669,10 @@ shared (install) persistent actor class Canister(
     var buy_o = switch (RBTree.get(orders, Nat.compare, buy_id)) {
       case (?found) found;
       case _ {
-        buy_lvl := OrderBook.levelDeleteOrder(buy_lvl, buy_id);
-        buy_book := OrderBook.saveLevel(buy_book, buy_p, buy_lvl);
         return #Next true;
       };
     };
-    var buyer = getUser(buy_o.owner);
-    let buy_sub = Account.denull(buy_o.subaccount);
-    var buyer_sub = OrderBook.getSubaccount(buyer, buy_sub);
+
     if (not buy_o.is_buy) {
       return #Next true;
     };
@@ -682,14 +689,13 @@ shared (install) persistent actor class Canister(
     if (buy_remain * p < env.min_quote_amount) return await* close(#Filled, buy_id, buy_o, _buy_lvl, buy_remain, wallet, env);
     if (sell_o.price > buy_o.price) return #Rest;
 
+    var seller = getUser(sell_o.owner);
+    let sell_sub = Account.denull(sell_o.subaccount);
+    var seller_sub = OrderBook.getSubaccount(seller, sell_sub);
+    var buyer = getUser(buy_o.owner);
+    let buy_sub = Account.denull(buy_o.subaccount);
+    var buyer_sub = OrderBook.getSubaccount(buyer, buy_sub);
     if (sell_o.owner == buy_o.owner and sell_sub == buy_sub) return #SameOwner;
-    if (sell_id == buy_id) {
-      return if (sell_o.is_buy) {
-        #Next false;
-      } else {
-        #Next true;
-      };
-    };
 
     let amount = Nat.min(sell_remain, buy_remain);
     let amount_q = amount * p;
@@ -697,8 +703,8 @@ shared (install) persistent actor class Canister(
     sell_o := { sell_o with base = OrderBook.lockAmount(sell_o.base, amount) };
     buy_o := { buy_o with base = OrderBook.lockAmount(buy_o.base, amount) };
 
-    sell_lvl := OrderBook.levelLock(_sell_lvl, amount);
-    buy_lvl := OrderBook.levelLock(_buy_lvl, amount);
+    var sell_lvl = OrderBook.levelLock(_sell_lvl, amount);
+    var buy_lvl = OrderBook.levelLock(_buy_lvl, amount);
 
     base := OrderBook.lockAmount(base, amount);
     quote := OrderBook.lockAmount(quote, amount_q);

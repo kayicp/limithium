@@ -1,12 +1,12 @@
 sequenceDiagram
     participant U as User
     participant T as ICRC-2 Token
-    participant A as Wallet Canister
+    participant A as Multi Asset Canister
 
-    U->>+T: icrc2_approve<br>(wallet_canister) 
+    U->>+T: icrc2_approve<br>(ledger_canister) 
     T-->>-U: Ok: block_id
     U->>+A: deposit(tokens)
-    A->>+T: icrc2_transfer_from<br>(user to wallet_canister)
+    A->>+T: icrc2_transfer_from<br>(user to ledger_canister)
     T-->>-A: Ok: block_id
     A-->A: Increase token balance 
     A-->>-U: Ok: block id
@@ -14,11 +14,11 @@ sequenceDiagram
 sequenceDiagram
     participant U as User
     participant T as ICRC-2 Token
-    participant A as Wallet Canister
+    participant A as Multi Asset Canister
 
     U->>+A: withdraw(tokens)
     A-->A: - Verify if unlocked<br>balance is sufficient<br>- Lock balance for withdrawal
-    A->>+T: icrc1_transfer<br>(wallet_canister to user)
+    A->>+T: icrc1_transfer<br>(ledger_canister to user)
     T-->>-A: Ok: block_id
     A-->A: - Release withdrawal lock<br>- Decrease unlocked balance 
     A-->>-U: Ok: block id
@@ -26,7 +26,7 @@ sequenceDiagram
 sequenceDiagram
     participant U as User
     participant B as Orderbook Canister
-    participant A as Wallet Canister
+    participant A as Multi Asset Canister
 
     U->>+B: place(orders)
     B-->>B: Validity check on orders<br>(price, amount, expires_at)
@@ -39,7 +39,7 @@ sequenceDiagram
 sequenceDiagram
     participant U as User
     participant B as Orderbook Canister
-    participant A as Wallet Canister
+    participant A as Multi Asset Canister
 
     U->>+B: cancel(order_ids)
     B-->>B: Validity check on order_ids<br>(if exist, owned by user, <br>is locked for trading, etc.)
@@ -52,7 +52,7 @@ sequenceDiagram
 sequenceDiagram
     participant U as User
     participant B as Orderbook Canister
-    participant A as Wallet Canister
+    participant A as Multi Asset Canister
 
     U->>+B: run()
     B-->>B: - Match overlapping unlocked orders<br>- Lock matched orders

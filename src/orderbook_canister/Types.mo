@@ -2,7 +2,7 @@ import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import ID "../util/motoko/ID";
-import W "../wallet_canister/Types";
+import W "../ledger_canister/Types";
 import Value "../util/motoko/Value";
 import Account "../util/motoko/ICRC-1/Account";
 
@@ -153,6 +153,8 @@ module {
       instructions : [W.Instruction];
       error : W.ExecuteErr;
     };
+    #CorruptOrderBook : { max_book : ?Nat; max_order : Nat };
+    #MatchFailed;
   };
   public type RunRes = Result.Type<Nat, RunErr>;
 
