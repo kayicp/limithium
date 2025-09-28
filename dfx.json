@@ -11,13 +11,13 @@
       "type": "custom",
       "wasm": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity_dev.wasm.gz"
     },
-    "ledger_canister": {
-      "main": "src/ledger_canister/main.mo",
+    "vault_canister": {
+      "main": "src/vault_canister/main.mo",
       "type": "motoko"
     },
     "frontend_canister": {
       "dependencies": [
-        "ledger_canister"
+        "vault_canister"
       ],
       "source": [
         "src/frontend_canister/dist"

@@ -3,10 +3,10 @@ sequenceDiagram
     participant T as ICRC-2 Token
     participant A as Multi Asset Canister
 
-    U->>+T: icrc2_approve<br>(ledger_canister) 
+    U->>+T: icrc2_approve<br>(vault_canister) 
     T-->>-U: Ok: block_id
     U->>+A: deposit(tokens)
-    A->>+T: icrc2_transfer_from<br>(user to ledger_canister)
+    A->>+T: icrc2_transfer_from<br>(user to vault_canister)
     T-->>-A: Ok: block_id
     A-->A: Increase token balance 
     A-->>-U: Ok: block id
@@ -18,7 +18,7 @@ sequenceDiagram
 
     U->>+A: withdraw(tokens)
     A-->A: - Verify if unlocked<br>balance is sufficient<br>- Lock balance for withdrawal
-    A->>+T: icrc1_transfer<br>(ledger_canister to user)
+    A->>+T: icrc1_transfer<br>(vault_canister to user)
     T-->>-A: Ok: block_id
     A-->A: - Release withdrawal lock<br>- Decrease unlocked balance 
     A-->>-U: Ok: block id

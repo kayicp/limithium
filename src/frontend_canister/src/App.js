@@ -1,5 +1,5 @@
 import { html, render } from 'lit-html';
-import { ledger_canister } from 'declarations/ledger_canister';
+import { vault_canister } from 'declarations/vault_canister';
 import logo from './logo2.svg';
 
 class App {
@@ -12,7 +12,7 @@ class App {
   #handleSubmit = async (e) => {
     e.preventDefault();
     const name = document.getElementById('name').value;
-    this.greeting = await ledger_canister.greet(name);
+    this.greeting = await vault_canister.greet(name);
     this.#render();
   };
 

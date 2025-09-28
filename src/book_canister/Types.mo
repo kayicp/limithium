@@ -2,43 +2,44 @@ import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import ID "../util/motoko/ID";
-import W "../ledger_canister/Types";
+import V "../vault_canister/Types";
 import Value "../util/motoko/Value";
 import Account "../util/motoko/ICRC-1/Account";
 
 module {
-  public let AVAILABLE = "orderbook:available";
-  public let MAX_ORDER_BATCH = "orderbook:max_order_batch_size";
+  public let AVAILABLE = "book:available";
+  public let MAX_ORDER_BATCH = "book:max_order_batch_size";
 
-  public let WALLET = "orderbook:wallet_canister_id";
+  public let WALLET = "book:wallet_canister_id";
   public let BASE_TOKEN = "icrc1_icrc1_orderbook:base_canister_id";
   public let QUOTE_TOKEN = "icrc1_icrc1_orderbook:quote_canister_id";
 
-  public let AMOUNT_TICK = "orderbook:amount_tick";
-  public let PRICE_TICK = "orderbook:price_tick";
-  public let MAKER_FEE_NUMER = "orderbook:maker_fee_numerator";
-  public let TAKER_FEE_NUMER = "orderbook:taker_fee_numerator";
-  public let TRADING_FEE_DENOM = "orderbook:trading_fee_denominator";
-  public let MIN_QUOTE_AMOUNT = "orderbook:minimum_quote_amount";
-  public let MIN_BASE_AMOUNT = "orderbook:minimum_base_amount";
-  public let MIN_PRICE = "orderbook:minimum_price";
-  public let TTL = "orderbook:time_to_live"; // seconds
-  public let DEFAULT_ORDER_EXPIRY = "orderbook:default_order_expiry";
-  public let MAX_ORDER_EXPIRY = "orderbook:max_order_expiry";
-  public let MIN_ORDER_EXPIRY = "orderbook:min_order_expiry";
+  public let AMOUNT_TICK = "book:amount_tick";
+  public let PRICE_TICK = "book:price_tick";
+  public let MAKER_FEE_NUMER = "book:maker_fee_numerator";
+  public let TAKER_FEE_NUMER = "book:taker_fee_numerator";
+  public let TRADING_FEE_DENOM = "book:trading_fee_denominator";
+  public let MIN_QUOTE_AMOUNT = "book:minimum_quote_amount";
+  public let MIN_BASE_AMOUNT = "book:minimum_base_amount";
+  public let MIN_PRICE = "book:minimum_price";
+  public let TTL = "book:time_to_live"; // seconds
+  public let DEFAULT_ORDER_EXPIRY = "book:default_order_expiry";
+  public let MAX_ORDER_EXPIRY = "book:max_order_expiry";
+  public let MIN_ORDER_EXPIRY = "book:min_order_expiry";
 
-  public let PLACE_FEE_QUOTE = "orderbook:open_fee_quote";
-  public let PLACE_FEE_BASE = "orderbook:open_fee_base";
-  public let CANCEL_FEE_QUOTE = "orderbook:close_fee_quote";
-  public let CANCEL_FEE_BASE = "orderbook:close_fee_base";
+  public let PLACE_FEE_QUOTE = "book:open_fee_quote";
+  public let PLACE_FEE_BASE = "book:open_fee_base";
+  public let CANCEL_FEE_QUOTE = "book:close_fee_quote";
+  public let CANCEL_FEE_BASE = "book:close_fee_base";
   // todo: not all need "icrc1_icrc1_" prefix
-  public let TX_WINDOW = "orderbook:tx_window";
-  public let PERMITTED_DRIFT = "orderbook:permitted_drift";
+  public let TX_WINDOW = "book:tx_window";
+  public let PERMITTED_DRIFT = "book:permitted_drift";
 
-  public let MIN_MEMO = "orderbook:min_memo_size";
-  public let MAX_MEMO = "orderbook:max_memo_size";
-  public let FEE_COLLECTOR = "orderbook:fee_collector";
+  public let MIN_MEMO = "book:min_memo_size";
+  public let MAX_MEMO = "book:max_memo_size";
+  public let FEE_COLLECTOR = "book:fee_collector";
 
+  // todo: add `block_id` to order and trade object
   public type Expiries = RBTree.Type<Nat64, ID.Many<()>>;
   public type Amount = { initial : Nat; locked : Nat; filled : Nat };
   public type Price = { base : Amount; orders : ID.Many<()> };
@@ -113,10 +114,10 @@ module {
     #PriceTooLow : { index : Nat; minimum_price : Nat };
     #PriceUnavailable : { index : Nat; order_id : Nat };
     #BadFee : { expected_base : Nat; expected_quote : Nat };
-    #CreatedInFuture : { ledger_time : Nat64 };
+    #CreatedInFuture : { vault_time : Nat64 };
     #TooOld;
     #Duplicate : { duplicate_of : Nat };
-    #ExecutionFailed : { instructions : [W.Instruction]; error : W.ExecuteErr };
+    #ExecutionFailed : { instructions : [V.Instruction]; error : V.ExecuteErr };
   };
   public type PlaceRes = Result.Type<[(order_id : Nat)], PlaceErr>;
 
@@ -135,7 +136,7 @@ module {
     #Closed : { index : Nat; at : Nat64 };
     #Locked : { index : Nat };
     #BadFee : { expected_base : Nat; expected_quote : Nat };
-    #ExecutionFailed : { instructions : [W.Instruction]; error : W.ExecuteErr };
+    #ExecutionFailed : { instructions : [V.Instruction]; error : V.ExecuteErr };
   };
   public type CancelRes = Result.Type<Nat, CancelErr>;
 
@@ -145,13 +146,13 @@ module {
     #TradeFailed : {
       buy : Nat;
       sell : Nat;
-      instructions : [W.Instruction];
-      error : W.ExecuteErr;
+      instructions : [V.Instruction];
+      error : V.ExecuteErr;
     };
     #CloseFailed : {
       order : Nat;
-      instructions : [W.Instruction];
-      error : W.ExecuteErr;
+      instructions : [V.Instruction];
+      error : V.ExecuteErr;
     };
     #CorruptOrderBook : { max_book : ?Nat; max_order : Nat };
     #MatchFailed;
