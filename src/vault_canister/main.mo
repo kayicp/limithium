@@ -1,7 +1,8 @@
-import W "Types";
+import V "Types";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
-import Account "../util/motoko/ICRC-1/Account";
-import ICRC1Token "../util/motoko/ICRC-1/Types";
+import ICRC1L "../icrc1_canister/ICRC1";
+import ICRC1T "../icrc1_canister/Types";
+import ICRC1 "../icrc1_canister/main";
 import Error "../util/motoko/Error";
 import Value "../util/motoko/Value";
 import Principal "mo:base/Principal";
@@ -24,17 +25,18 @@ shared (install) persistent actor class Canister(
   var block_id = 0;
 
   var meta : Value.Metadata = RBTree.empty();
-  var users : W.Users = RBTree.empty();
-  var icrc1s = RBTree.empty<Principal, W.ICRC1Token>();
-  var books = RBTree.empty<Principal, ()>();
+  var users : V.Users = RBTree.empty();
+  var icrc1s = RBTree.empty<Principal, V.ICRC1Token>();
+  var executors = RBTree.empty<Principal, ()>();
+  var blocks = RBTree.empty<Nat, Value.Type>();
 
-  var deposit_icrc2_dedupes : W.ICRCDedupes = RBTree.empty();
-  var withdraw_icrc1_dedupes : W.ICRCDedupes = RBTree.empty();
+  var deposit_icrc2_dedupes : V.ICRCDedupes = RBTree.empty();
+  var withdraw_icrc1_dedupes : V.ICRCDedupes = RBTree.empty();
 
-  public shared ({ caller }) func wallet_deposit_icrc2(arg : W.ICRC1TokenArg) : async W.DepositRes {
-    if (not Value.getBool(meta, W.AVAILABLE, true)) return Error.text("Unavailable");
+  public shared ({ caller }) func vault_deposit_icrc2(arg : V.ICRC1TokenArg) : async V.DepositRes {
+    if (not Value.getBool(meta, V.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
-    if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
+    if (not ICRC1L.validate(user_acct)) return Error.text("Caller account is not valid");
 
     let (token_canister, token) = switch (getICRC1(arg.canister_id)) {
       case (?found) found;
@@ -75,7 +77,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err(#TransferFailed err);
     };
     var user = getUser(caller);
-    let arg_subacc = Account.denull(arg.subaccount);
+    let arg_subacc = ICRC1L.denull(arg.subaccount);
     var subacc = Vault.getSubaccount(user, arg_subacc);
     var bal = Vault.getICRCBalance(subacc, arg.canister_id);
     bal := { bal with unlocked = bal.unlocked + arg.amount };
@@ -83,7 +85,7 @@ shared (install) persistent actor class Canister(
     user := Vault.saveSubaccount(user, arg_subacc, subacc);
     user := saveUser(caller, user);
 
-    // todo: take fee, but later since fee is zero
+    // todo: take fee, but skip since fee is zero
     // todo: blockify
     // todo: save dedupe
     #Ok 1;
@@ -91,11 +93,11 @@ shared (install) persistent actor class Canister(
   // todo: deposit/withdraw icrc1_transfer
   // todo: deposit/withdraw native btc/eth
 
-  public shared ({ caller }) func wallet_withdraw_icrc1(arg : W.ICRC1TokenArg) : async W.WithdrawRes {
-    if (not Value.getBool(meta, W.AVAILABLE, true)) return Error.text("Unavailable");
+  public shared ({ caller }) func vault_withdraw_icrc1(arg : V.ICRC1TokenArg) : async V.WithdrawRes {
+    if (not Value.getBool(meta, V.AVAILABLE, true)) return Error.text("Unavailable");
 
     let user_acct = { owner = caller; subaccount = arg.subaccount };
-    if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
+    if (not ICRC1L.validate(user_acct)) return Error.text("Caller account is not valid");
 
     let (token_canister, token) = switch (getICRC1(arg.canister_id)) {
       case (?found) found;
@@ -105,7 +107,7 @@ shared (install) persistent actor class Canister(
     if (token.withdrawal_fee <= xfer_fee) return Error.text("Withdrawal fee must be larger than transfer fee");
 
     var user = getUser(caller);
-    let arg_subacc = Account.denull(arg.subaccount);
+    let arg_subacc = ICRC1L.denull(arg.subaccount);
     var subacc = Vault.getSubaccount(user, arg_subacc);
     var bal = Vault.getICRCBalance(subacc, arg.canister_id);
     let to_lock = arg.amount + token.withdrawal_fee;
@@ -157,7 +159,7 @@ shared (install) persistent actor class Canister(
     };
 
     let this_canister = Principal.fromActor(Self);
-    let canister_subaccount = Account.denull(null);
+    let canister_subaccount = ICRC1L.denull(null);
     user := getUser(this_canister); // give fee to canister
     subacc := Vault.getSubaccount(user, canister_subaccount);
     bal := Vault.getICRCBalance(subacc, arg.canister_id);
@@ -172,13 +174,13 @@ shared (install) persistent actor class Canister(
     #Ok 1;
   };
 
-  public shared ({ caller }) func wallet_execute(instructions : [W.Instruction]) : async W.ExecuteRes {
-    if (not RBTree.has(books, Principal.compare, caller)) return Error.text("Caller is not an orderbook canister");
+  public shared ({ caller }) func vault_execute(instructions : [V.Instruction]) : async V.ExecuteRes {
+    if (not RBTree.has(executors, Principal.compare, caller)) return Error.text("Caller is not an orderbook canister");
     if (instructions.size() == 0) return Error.text("Instructions must not be empty");
 
-    var lusers : W.Users = RBTree.empty();
+    var lusers : V.Users = RBTree.empty();
 
-    func getAccount(acc : Account.Pair) : W.UserData {
+    func getAccount(acc : ICRC1T.Account) : V.UserData {
       let user = switch (RBTree.get(lusers, Principal.compare, acc.owner)) {
         case (?found) found;
         case _ switch (RBTree.get(users, Principal.compare, acc.owner)) {
@@ -189,7 +191,7 @@ shared (install) persistent actor class Canister(
           });
         };
       };
-      let subacc = Account.denull(acc.subaccount);
+      let subacc = ICRC1L.denull(acc.subaccount);
       let subacc_data = Vault.getSubaccount(user, subacc);
       { acc with user; subacc; subacc_data };
     };
@@ -204,7 +206,7 @@ shared (install) persistent actor class Canister(
       lusers := RBTree.insert(lusers, Principal.compare, a.owner, a.user);
       t;
     };
-    func execute(index : Nat) : W.ExecuteRes = if (instructions[index].amount > 0) switch (instructions[index].action) {
+    func execute(index : Nat) : V.ExecuteRes = if (instructions[index].amount > 0) switch (instructions[index].action) {
       case (#Lock) if (b.unlocked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.unlocked }) else {
         b := Vault.decUnlock(b, instructions[index].amount);
         b := Vault.incLock(b, instructions[index].amount);
@@ -217,7 +219,7 @@ shared (install) persistent actor class Canister(
       };
       case (#Transfer action) {
         if (b.unlocked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.unlocked });
-        if (Account.equal(instructions[index].account, action.to)) return #Err(#InvalidTransfer { index });
+        if (ICRC1L.equal(instructions[index].account, action.to)) return #Err(#InvalidTransfer { index });
         b := Vault.decUnlock(b, instructions[index].amount);
         reserve();
 
@@ -246,48 +248,48 @@ shared (install) persistent actor class Canister(
     #Ok 1;
   };
 
-  func getUser(p : Principal) : W.User = switch (RBTree.get(users, Principal.compare, p)) {
+  func getUser(p : Principal) : V.User = switch (RBTree.get(users, Principal.compare, p)) {
     case (?found) found;
     case _ ({
       last_activity = 0;
       subaccs = RBTree.empty();
     });
   };
-  func saveUser(p : Principal, u : W.User) : W.User {
+  func saveUser(p : Principal, u : V.User) : V.User {
     users := RBTree.insert(users, Principal.compare, p, u);
     u;
   };
   func checkMemo(m : ?Blob) : Result.Type<(), Error.Generic> = switch m {
     case (?defined) {
-      var min_memo_size = Value.getNat(meta, W.MIN_MEMO, 1);
+      var min_memo_size = Value.getNat(meta, V.MIN_MEMO, 1);
       if (min_memo_size < 1) {
         min_memo_size := 1;
-        meta := Value.setNat(meta, W.MIN_MEMO, ?min_memo_size);
+        meta := Value.setNat(meta, V.MIN_MEMO, ?min_memo_size);
       };
       if (defined.size() < min_memo_size) return Error.text("Memo size must be larger than " # debug_show min_memo_size);
 
-      var max_memo_size = Value.getNat(meta, W.MAX_MEMO, 1);
+      var max_memo_size = Value.getNat(meta, V.MAX_MEMO, 1);
       if (max_memo_size < min_memo_size) {
         max_memo_size := min_memo_size;
-        meta := Value.setNat(meta, W.MAX_MEMO, ?max_memo_size);
+        meta := Value.setNat(meta, V.MAX_MEMO, ?max_memo_size);
       };
       if (defined.size() > max_memo_size) return Error.text("Memo size must be smaller than " # debug_show max_memo_size);
       #Ok;
     };
     case _ #Ok;
   };
-  func checkIdempotency(caller : Principal, opr : W.ArgType, now : Nat64, created_at_time : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
-    var tx_window = Nat64.fromNat(Value.getNat(meta, W.TX_WINDOW, 0));
+  func checkIdempotency(caller : Principal, opr : V.ArgType, now : Nat64, created_at_time : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
+    var tx_window = Nat64.fromNat(Value.getNat(meta, V.TX_WINDOW, 0));
     let min_tx_window = Time64.MINUTES(15);
     if (tx_window < min_tx_window) {
       tx_window := min_tx_window;
-      meta := Value.setNat(meta, W.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+      meta := Value.setNat(meta, V.TX_WINDOW, ?(Nat64.toNat(tx_window)));
     };
-    var permitted_drift = Nat64.fromNat(Value.getNat(meta, W.PERMITTED_DRIFT, 0));
+    var permitted_drift = Nat64.fromNat(Value.getNat(meta, V.PERMITTED_DRIFT, 0));
     let min_permitted_drift = Time64.SECONDS(5);
     if (permitted_drift < min_permitted_drift) {
       permitted_drift := min_permitted_drift;
-      meta := Value.setNat(meta, W.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+      meta := Value.setNat(meta, V.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
     };
     switch (created_at_time) {
       case (?created_time) {
@@ -307,12 +309,12 @@ shared (install) persistent actor class Canister(
       case _ #Ok;
     };
   };
-  func getICRC1(p : Principal) : ?(ICRC1Token.Actor, W.ICRC1Token) = switch (RBTree.get(icrc1s, Principal.compare, p)) {
-    case (?found) ?(ICRC1Token.genActor(p), found);
+  func getICRC1(p : Principal) : ?(ICRC1.Canister, V.ICRC1Token) = switch (RBTree.get(icrc1s, Principal.compare, p)) {
+    case (?found) ?(actor (Principal.toText(p)), found);
     case _ null;
   };
 
-  public shared ({ caller }) func wallet_enlist_icrc2({
+  public shared ({ caller }) func vault_enlist_icrc1({
     canister_id : Principal;
     min_deposit : Nat;
     deposit_fee : Nat;
@@ -322,7 +324,7 @@ shared (install) persistent actor class Canister(
 
     if (min_deposit <= deposit_fee) return Error.text("min_deposit must be larger than deposit_fee");
 
-    let token = ICRC1Token.genActor(canister_id);
+    let token = actor (Principal.toText(canister_id)) : ICRC1.Canister;
     let transfer_fee = await token.icrc1_fee();
     if (withdrawal_fee <= transfer_fee) return Error.text("withdrawal_fee must be larger than transfer fee (" # debug_show transfer_fee # ")");
 
@@ -336,12 +338,30 @@ shared (install) persistent actor class Canister(
     #Ok;
   };
 
-  public shared ({ caller }) func wallet_delist_icrc2({
+  public shared ({ caller }) func vault_delist_icrc1({
     canister_id : Principal;
   }) : async Result.Type<(), Error.Generic> {
     if (not Principal.isController(caller)) return Error.text("Caller is not controller");
 
     icrc1s := RBTree.delete(icrc1s, Principal.compare, canister_id);
+    #Ok;
+  };
+
+  public shared ({ caller }) func vault_approve_executor({
+    canister_id : Principal;
+  }) : async Result.Type<(), Error.Generic> {
+    if (not Principal.isController(caller)) return Error.text("Caller is not controller");
+
+    executors := RBTree.insert(executors, Principal.compare, canister_id, ());
+    #Ok;
+  };
+
+  public shared ({ caller }) func vault_revoke_executor({
+    canister_id : Principal;
+  }) : async Result.Type<(), Error.Generic> {
+    if (not Principal.isController(caller)) return Error.text("Caller is not controller");
+
+    executors := RBTree.delete(executors, Principal.compare, canister_id);
     #Ok;
   };
 };

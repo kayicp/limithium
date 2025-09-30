@@ -1,25 +1,70 @@
-Limithium will consists of 2 types of canisters:
-(A) Centralized Multi-Token Balance (aka Wallet) Canister:
-- maintains the map of users' deposited balance across multiple tokens.
-- `deposit(token, amount): Ok(block_id)/Err` and `withdraw(token, amount): Ok(block_id)/Err` to track internal balances.
-- `lock(user, token, amount) : Ok/Err`, only callable by (B)'s `place(orders)`, to prevent balance from being withdrawn.
-- `unlock(user, token, amount) : Ok/Err`, only callable by (B)'s `cancel(order_ids)`, to enable withdrawal on the balance.
-- `swap(sell_order, buy_order): Ok/Err`, only callable by (B)'s `run()` to atomically update both traders' internal token balance, due to ICP asynchronous nature.
-- some query endpoints: `balance(user, token, is_locked) : Nat`, etc. 
 
-(B) Trading Pair Price-Time Priority Orderbook Canister
-- maintains the map of users' sell orders.
-- maintains the map of users' buy orders.
-- maintains the orderbook settings (amount tick, price tick, minimum order amount, maximum order expiry, etc.)
-- `place(orders: [Order]) : Ok[order_id]/Err` to place new orders, which will call (A)'s `lock` to reserve the balance for the new orders.
-- `cancel([orders_id]) : Ok/Err` to remove orders, which will call (A)'s `unlock` to unreserve the unfilled balance from the to-be-cancel orders. 
-- `run() : ()` to match overlapping sell orders and buy orders, lock them to prevent from being matched twice, then call (A)'s `swap` to fill the orders.
-- some query endpoints: `sell_orders(prev, take) : [order id]`, `amount_of([order_id]) : [amount]`, `price_of([order_id]) : [price]`, etc.
+There will be 4 types of canisters:
 
-(C) Frontend Canister
-- allow login via Internet Identity
-- pair selector (only ckBTC/ICP for now)
-- a very simple/minimal orderbook view
-- order placement form (price, amount in ckBTC, amount in ICP)
-- open orders (for cancellation)
-- deposit form, withdraw form (token, amount)
+(A) Multi-token Vault canister (only one)
+PURPOSE: handles user's deposits/withdrawals of multiple ICRC-1 tokens (eg: ICP, ckBTC, ckETH, GLDT, etc.), and atomic token lock/unlock/swap of user's internal balances.
+
+KEY STABLE VARIABLES: 
+- users: map to track each user's internal balance per token (caller's principal -> subaccount -> token's principal -> locked balance, unlocked balance).
+- supported_icrc1s: map to store which ICRC-1 token canister id is allowed to be deposited/withdrawn, along with their settings such as minimum deposit amount, withdrawal fee, etc.
+- executors: map to store which canister is allowed to call `vault_execute_atomic` to perform atomic lock/unlock/swap operations on users' internal token balances.
+- deposit_dedupes, withdraw_dedupes: for idempotency (Caller, Arg -> block id)
+- blocks: map for txn history and auditability (block id -> ICRC-3's Value type)
+
+KEY UPDATE FUNCTIONS: 
+- vault_deposit_icrc2: for users to deposit their tokens via ICRC-2 flow.
+- vault_withdraw_icrc1: for users to withdraw their token's internal balance to external wallet.
+- vault_enlist_icrc1s: for controller to add tokens to support, or to update their settings (min deposit amount, withdrawal fee, etc.).
+- vault_enlist_executors: for controller to add principals that are allowed to call `vault_execute_atomic`.
+- vault_execute_atomic: for executors to perform atomic (all or nothing) operations (lock/unlock/transfer) on users' internal balances. No external intercanister calls will be made.
+
+KEY QUERY FUNCTIONS:
+- vault_unlocked_balances_of: returns batch of user's tokens' unlocked balance.
+- vault_locked_balances_of: returns batch of user's tokens' locked balance.
+- vault_icrc1s: returns paged ICRC-1 token canister ids.
+- vault_executors: returns paged principals that's allowed to call `vault_execute_atomic`
+================================================================================================
+(B) Order Book canister (for each trading pair, eg: ckBTC/ICP, ckETH/ICP, GLDT/ICP, ... )
+PURPOSE: handles user's limit order placements/cancellations, orders matching and act as an executor to the Vault canister. 
+
+KEY STABLE VARIABLES:
+- metadata: map of order book settings (eg: "base_token", "quote_token", "min_price", "min_amount", etc.) (text -> ICRC-3's Value type)
+- orders: map to store limit orders (order id -> side, price, amount, filled, expires_at, trades, user, ... )
+- users: map to store user's orders (caller's principal -> subaccount -> order_ids, sell_ids, buy_ids, ... )
+- bids: map of price-time sort of buy order ids (price -> order ids)
+- asks: map of price-time sort of sell order ids (price -> order ids)
+- trades: map of successful atomic swaps executed (trade id -> maker_id, taker_id, price, time, maker_fee, taker_fee, ... )
+- open_dedupes: for idempotency (Caller, Arg -> block id)
+- blocks: map for txn history and auditability (block id -> ICRC-3's Value type)
+
+KEY UPDATE FUNCTIONS:
+- book_open: for users to place batched limit orders (buy or sell)
+- book_close: for users to close batched orders by ids
+- book_run: for competitive traders (who have active unfilled orders near current price) to notify the canister to do a work (match/settle orders, trim expired orders, etc.) and get rewarded LMTM token minting rounds
+
+KEY QUERY FUNCTIONS:
+- book_metadata: returns order book settings
+- book_orders_by: returns paged order ids by user account, from newest to oldest
+- book_orders: returns paged order object by order ids
+- book_trades_by: returns paged trade ids by order id
+- book_trades: returns paged trade object by trade ids
+- book_bid_prices: returns paged prices, from highest to lowest
+- book_ask_prices: returns paged sell prices, from lowest to highest 
+- book_bids_at, book_asks_at: returns paged order ids at price
+================================================================================================
+(C) Limithium ICRC-1 compliant token (symbol: LMTM) (minting rate: decaying every round) 
+PURPOSE: To reward market makers, and to share platform's revenue with holders.
+
+KEY UPDATE FUNCTIONS:
+- lmtm_enqueue_minting_rounds: for Vault's executors only, to reward callers of `book_run` by 1 minting round if there's a job done, or to reward market makers minting rounds based on traded volume in ICP. 
+================================================================================================
+(D) Minimal Frontend Canister (only one)
+PURPOSE: Enable users to interact with all backend canisters intuitively. Must be hosted on ICP to prevent fake UI attacks (phishing or wallet draining attacks).
+
+KEY COMPONENTS:
+- login via Internet Identity, OISY, Plug, ...
+- deposit/withdraw form: token select, amount input
+- place limit order form: side (buy or sell) toggle, price input, amount input, submit button
+- open orders: view orders info (side, pair, filled, amount, price, time), close button
+- order book: nearest 12 price levels (6 asks, 6 bids) (price, amount)
+- live trades: time, price, amount

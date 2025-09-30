@@ -43,15 +43,15 @@ shared (install) persistent actor class Canister(
   var block_id = 0;
   var blocks = RBTree.empty<Nat, Value.Type>();
 
-  // public shared query func orderbook_base_balances_of() : async [Nat] {
+  // public shared query func book_base_balances_of() : async [Nat] {
   //   []
   // };
 
-  // public shared query func orderbook_quote_balances_of() : async [Nat] {
+  // public shared query func book_quote_balances_of() : async [Nat] {
   //   []
   // };
 
-  public shared ({ caller }) func orderbook_open(arg : B.PlaceArg) : async B.PlaceRes {
+  public shared ({ caller }) func book_open(arg : B.PlaceArg) : async B.PlaceRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
     if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
@@ -170,7 +170,7 @@ shared (install) persistent actor class Canister(
     });
     let instructions = Buffer.toArray(instructions_buff);
     // todo: reserve user subaccount first
-    let lock_id = switch (await wallet.wallet_execute(instructions)) {
+    let lock_id = switch (await wallet.vault_execute(instructions)) {
       case (#Err err) return #Err(#ExecutionFailed { instructions; error = err });
       case (#Ok ok) ok;
     };
@@ -211,7 +211,7 @@ shared (install) persistent actor class Canister(
     #Ok([]);
   };
 
-  public shared ({ caller }) func orderbook_close(arg : B.CancelArg) : async B.CancelRes {
+  public shared ({ caller }) func book_close(arg : B.CancelArg) : async B.CancelRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
     if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
@@ -343,7 +343,7 @@ shared (install) persistent actor class Canister(
       });
     };
     let instructions = Buffer.toArray(instructions_buff);
-    let unlock_id = switch (await wallet.wallet_execute(instructions)) {
+    let unlock_id = switch (await wallet.vault_execute(instructions)) {
       case (#Err err) return #Err(#ExecutionFailed { instructions; error = err }); // todo: unlock/rollback
       case (#Ok ok) ok;
     };
@@ -415,7 +415,7 @@ shared (install) persistent actor class Canister(
 
   var max_book = null : ?Nat;
   // var runners = RBTree.empty<Principal, Nat64>();
-  public shared ({ caller }) func orderbook_run(arg : B.RunArg) : async B.RunRes {
+  public shared ({ caller }) func book_run(arg : B.RunArg) : async B.RunRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
     if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
@@ -614,7 +614,7 @@ shared (install) persistent actor class Canister(
       amount = amt;
       action = #Unlock;
     };
-    try switch (await wallet.wallet_execute([instruction])) {
+    try switch (await wallet.vault_execute([instruction])) {
       case (#Err err) {
         unlockClose();
         saveClose(false);
@@ -779,7 +779,7 @@ shared (install) persistent actor class Canister(
       buyer_sub := Book.getSubaccount(buyer, buy_sub);
       buyer_sub := Book.subaccUnlockQuote(buyer_sub, amount_q);
     };
-    try switch (await wallet.wallet_execute(instructions)) {
+    try switch (await wallet.vault_execute(instructions)) {
       case (#Err err) {
         unlockMatch();
         saveMatch();

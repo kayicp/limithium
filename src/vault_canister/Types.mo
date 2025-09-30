@@ -1,8 +1,7 @@
 import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
-import ICRC1Token "../util/motoko/ICRC-1/Types";
-import Account "../util/motoko/ICRC-1/Account";
+import ICRC1Token "../icrc1_canister/Types";
 import ID "../util/motoko/ID";
 
 module {
@@ -79,7 +78,7 @@ module {
     // todo: move amount to Instruction
     #Lock;
     #Unlock;
-    #Transfer : { to : Account.Pair };
+    #Transfer : { to : ICRC1Token.Account };
   };
   public type ExecuteErr = {
     #GenericError : Error.Type;
@@ -90,7 +89,7 @@ module {
   };
   public type ExecuteRes = Result.Type<Nat, ExecuteErr>;
   public type Instruction = {
-    account : Account.Pair;
+    account : ICRC1Token.Account;
     asset : Asset;
     amount : Nat;
     action : Action;
