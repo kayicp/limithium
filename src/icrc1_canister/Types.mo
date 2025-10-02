@@ -1,15 +1,28 @@
 import Principal "mo:base/Principal";
 import Error "../util/motoko/Error";
-import Result "../util/motoko/Result";
 import Value "../util/motoko/Value";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 
 module {
-  public let default_subaccount : [Nat8] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  public let TX_WINDOW = "icrc1:tx_window";
+  public let PERMITTED_DRIFT = "icrc1:permitted_drift";
+  public let MINTER = "icrc1:minter";
+  public let TOTAL_SUPPLY = "icrc1:total_supply";
+  public let FEE = "icrc1:fee";
+  public let MIN_MEMO = "icrc1:min_memo_size";
+  public let MAX_MEMO = "icrc1:max_memo_size";
+  public let MAX_APPROVAL_EXPIRY = "icrc1:max_approval_expiry";
+  public let MIN_APPROVAL_EXPIRY = "icrc1:min_approval_expiry";
+  public let DEFAULT_APPROVAL_EXPIRY = "icrc1:default_approval_expiry";
+  public let VAULT = "lmtm:vault";
+
   public type Account = { owner : Principal; subaccount : ?Blob };
-  public type AllowanceTuple = (allowance : Nat, expiry : ?Nat64);
-  public type SpenderSubs = RBTree.Type<Blob, AllowanceTuple>;
-  public type Subaccount = (balance : Nat, spenders : RBTree.Type<Principal, SpenderSubs>);
+  public type Approval = { allowance : Nat; expires_at : Nat64 };
+  public type Approvals = RBTree.Type<Blob, Approval>;
+  public type Subaccount = {
+    balance : Nat;
+    spenders : RBTree.Type<Principal, Approvals>;
+  };
   public type Subaccounts = RBTree.Type<Blob, Subaccount>;
   public type Users = RBTree.Type<Principal, Subaccounts>;
 
@@ -92,7 +105,25 @@ module {
     callback : shared query [GetBlocksRequest] -> async GetBlocksResult;
   };
 
+  public type ArgType = {
+    #Transfer : TransferArg;
+    #Approve : ApproveArg;
+    #TransferFrom : TransferFromArg;
+  };
+
+  public type Environment = {
+    meta : Value.Metadata;
+    minter : Account;
+    fee : Nat;
+    now : Nat64;
+  };
+
+  public type Enqueue = { account : Account; rounds : Nat };
   public type EnqueueErrors = {
+    #GenericError : Error.Type;
+  };
+
+  public type Actor = actor {
 
   };
 };

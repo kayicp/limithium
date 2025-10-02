@@ -13,6 +13,7 @@ import Iter "mo:base/Iter";
 import Time64 "../util/motoko/Time64";
 import Vault "Vault";
 import Result "../util/motoko/Result";
+import Subaccount "../util/motoko/Subaccount";
 
 // todo: lets not use user/subacc id mapping, store everything as-is
 
@@ -36,7 +37,7 @@ shared (install) persistent actor class Canister(
   public shared ({ caller }) func vault_deposit_icrc2(arg : V.ICRC1TokenArg) : async V.DepositRes {
     if (not Value.getBool(meta, V.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
-    if (not ICRC1L.validate(user_acct)) return Error.text("Caller account is not valid");
+    if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
 
     let (token_canister, token) = switch (getICRC1(arg.canister_id)) {
       case (?found) found;
@@ -77,7 +78,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err(#TransferFailed err);
     };
     var user = getUser(caller);
-    let arg_subacc = ICRC1L.denull(arg.subaccount);
+    let arg_subacc = Subaccount.get(arg.subaccount);
     var subacc = Vault.getSubaccount(user, arg_subacc);
     var bal = Vault.getICRCBalance(subacc, arg.canister_id);
     bal := { bal with unlocked = bal.unlocked + arg.amount };
@@ -97,7 +98,7 @@ shared (install) persistent actor class Canister(
     if (not Value.getBool(meta, V.AVAILABLE, true)) return Error.text("Unavailable");
 
     let user_acct = { owner = caller; subaccount = arg.subaccount };
-    if (not ICRC1L.validate(user_acct)) return Error.text("Caller account is not valid");
+    if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
 
     let (token_canister, token) = switch (getICRC1(arg.canister_id)) {
       case (?found) found;
@@ -107,7 +108,7 @@ shared (install) persistent actor class Canister(
     if (token.withdrawal_fee <= xfer_fee) return Error.text("Withdrawal fee must be larger than transfer fee");
 
     var user = getUser(caller);
-    let arg_subacc = ICRC1L.denull(arg.subaccount);
+    let arg_subacc = Subaccount.get(arg.subaccount);
     var subacc = Vault.getSubaccount(user, arg_subacc);
     var bal = Vault.getICRCBalance(subacc, arg.canister_id);
     let to_lock = arg.amount + token.withdrawal_fee;
@@ -159,7 +160,7 @@ shared (install) persistent actor class Canister(
     };
 
     let this_canister = Principal.fromActor(Self);
-    let canister_subaccount = ICRC1L.denull(null);
+    let canister_subaccount = Subaccount.get(null);
     user := getUser(this_canister); // give fee to canister
     subacc := Vault.getSubaccount(user, canister_subaccount);
     bal := Vault.getICRCBalance(subacc, arg.canister_id);
@@ -175,7 +176,7 @@ shared (install) persistent actor class Canister(
   };
 
   public shared ({ caller }) func vault_execute(instructions : [V.Instruction]) : async V.ExecuteRes {
-    if (not RBTree.has(executors, Principal.compare, caller)) return Error.text("Caller is not an orderbook canister");
+    if (not RBTree.has(executors, Principal.compare, caller)) return Error.text("Caller is not an executor");
     if (instructions.size() == 0) return Error.text("Instructions must not be empty");
 
     var lusers : V.Users = RBTree.empty();
@@ -191,7 +192,7 @@ shared (install) persistent actor class Canister(
           });
         };
       };
-      let subacc = ICRC1L.denull(acc.subaccount);
+      let subacc = Subaccount.get(acc.subaccount);
       let subacc_data = Vault.getSubaccount(user, subacc);
       { acc with user; subacc; subacc_data };
     };
@@ -219,7 +220,7 @@ shared (install) persistent actor class Canister(
       };
       case (#Transfer action) {
         if (b.unlocked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.unlocked });
-        if (ICRC1L.equal(instructions[index].account, action.to)) return #Err(#InvalidTransfer { index });
+        if (ICRC1L.equalAccount(instructions[index].account, action.to)) return #Err(#InvalidTransfer { index });
         b := Vault.decUnlock(b, instructions[index].amount);
         reserve();
 
@@ -355,6 +356,8 @@ shared (install) persistent actor class Canister(
     executors := RBTree.insert(executors, Principal.compare, canister_id, ());
     #Ok;
   };
+
+  public shared query func vault_is_executor(p : Principal) : async Bool = async RBTree.has(executors, Principal.compare, p);
 
   public shared ({ caller }) func vault_revoke_executor({
     canister_id : Principal;

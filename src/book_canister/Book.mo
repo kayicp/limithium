@@ -9,7 +9,7 @@ import Nat8 "mo:base/Nat8";
 import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import Value "../util/motoko/Value";
-import ICRC1Token "../util/motoko/ICRC-1/Types";
+import ICRC1 "../icrc1_canister/main";
 import Time64 "../util/motoko/Time64";
 
 module {
@@ -158,7 +158,7 @@ module {
       case _ return Error.text("Metadata `" # O.QUOTE_TOKEN # "` is not properly set");
     };
     if (base_token_id == quote_token_id) return Error.text("Base token and Quote token are similar");
-    let (base_token, quote_token) = (ICRC1Token.genActor(base_token_id), ICRC1Token.genActor(quote_token_id));
+    let (base_token, quote_token) = (actor (Principal.toText(base_token_id)) : ICRC1.Canister, actor (Principal.toText(quote_token_id)) : ICRC1.Canister);
 
     let (base_decimals_res, quote_decimals_res, base_fee_res, quote_fee_res) = (base_token.icrc1_decimals(), quote_token.icrc1_decimals(), base_token.icrc1_fee(), quote_token.icrc1_fee());
     let (base_power, quote_power, base_token_fee, quote_token_fee) = (10 ** Nat8.toNat(await base_decimals_res), 10 ** Nat8.toNat(await quote_decimals_res), await base_fee_res, await quote_fee_res);

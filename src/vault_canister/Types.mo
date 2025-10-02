@@ -2,7 +2,6 @@ import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import ICRC1Token "../icrc1_canister/Types";
-import ID "../util/motoko/ID";
 
 module {
   public let AVAILABLE = "wallet:available";
@@ -99,5 +98,8 @@ module {
     user : User;
     subacc : Blob;
     subacc_data : Subaccount;
+  };
+  public type Actor = actor {
+    vault_is_executor : shared Principal -> async Bool;
   };
 };
