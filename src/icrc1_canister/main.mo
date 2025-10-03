@@ -73,14 +73,14 @@ shared (install) persistent actor class Canister(
 
     subacc := ICRC1.decBalance(subacc, transfer_and_fee);
     user := ICRC1.saveSubaccount(user, sub, subacc);
-    user := saveUser(caller, user);
+    saveUser(caller, user);
 
     user := getUser(arg.to.owner);
     sub := Subaccount.get(arg.to.subaccount);
     subacc := ICRC1.getSubaccount(user, sub);
     subacc := ICRC1.incBalance(subacc, arg.amount);
     user := ICRC1.saveSubaccount(user, sub, subacc);
-    user := saveUser(arg.to.owner, user);
+    saveUser(arg.to.owner, user);
 
     if (expected_fee > 0) {
       user := getUser(env.minter.owner);
@@ -88,7 +88,7 @@ shared (install) persistent actor class Canister(
       subacc := ICRC1.getSubaccount(user, sub);
       subacc := ICRC1.incBalance(subacc, expected_fee);
       user := ICRC1.saveSubaccount(user, sub, subacc);
-      user := saveUser(env.minter.owner, user);
+      saveUser(env.minter.owner, user);
     };
 
     // todo: blockify
@@ -148,7 +148,7 @@ shared (install) persistent actor class Canister(
     spender := ICRC1.saveApproval(spender, spender_sub, arg.amount, expires_at);
     subacc := ICRC1.saveSpender(subacc, arg.spender.owner, spender);
     user := ICRC1.saveSubaccount(user, sub, subacc);
-    user := saveUser(caller, user);
+    saveUser(caller, user);
 
     // todo: blockify
     // todo: save dedupe
@@ -205,21 +205,21 @@ shared (install) persistent actor class Canister(
     subacc := ICRC1.saveSpender(subacc, caller, spender);
     subacc := ICRC1.decBalance(subacc, transfer_and_fee);
     user := ICRC1.saveSubaccount(user, sub, subacc);
-    user := saveUser(caller, user);
+    saveUser(caller, user);
 
     user := getUser(arg.to.owner);
     sub := Subaccount.get(arg.to.subaccount);
     subacc := ICRC1.getSubaccount(user, sub);
     subacc := ICRC1.incBalance(subacc, arg.amount);
     user := ICRC1.saveSubaccount(user, sub, subacc);
-    user := saveUser(arg.to.owner, user);
+    saveUser(arg.to.owner, user);
 
     user := getUser(env.minter.owner);
     sub := Subaccount.get(env.minter.subaccount);
     subacc := ICRC1.getSubaccount(user, sub);
     subacc := ICRC1.incBalance(subacc, env.fee);
     user := ICRC1.saveSubaccount(user, sub, subacc);
-    user := saveUser(env.minter.owner, user);
+    saveUser(env.minter.owner, user);
 
     // todo: blockify
     // todo: save dedupe
@@ -285,14 +285,14 @@ shared (install) persistent actor class Canister(
     let mint = Nat.max((env.max_mint * subacc.balance) / env.total_supply, 1);
     subacc := ICRC1.decBalance(subacc, mint);
     user := ICRC1.saveSubaccount(user, sub, subacc);
-    user := saveUser(env.minter.owner, user);
+    saveUser(env.minter.owner, user);
 
     user := getUser(q.account.owner); // give to user
     sub := Subaccount.get(q.account.subaccount);
     subacc := ICRC1.getSubaccount(user, sub);
     subacc := ICRC1.incBalance(subacc, mint);
     user := ICRC1.saveSubaccount(user, sub, subacc);
-    user := saveUser(q.account.owner, user);
+    saveUser(q.account.owner, user);
 
     // todo: blockify
 
@@ -325,10 +325,7 @@ shared (install) persistent actor class Canister(
     case (?found) found;
     case _ RBTree.empty();
   };
-  func saveUser(p : Principal, u : I.Subaccounts) : I.Subaccounts {
-    users := if (RBTree.size(u) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
-    u;
-  };
+  func saveUser(p : Principal, u : I.Subaccounts) = users := if (RBTree.size(u) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
 
   func checkMemo(m : ?Blob) : Result.Type<(), Error.Generic> = switch m {
     case (?defined) {

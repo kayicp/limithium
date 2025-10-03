@@ -1,43 +1,44 @@
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
-import W "Types";
+import V "Types";
 import Nat "mo:base/Nat";
 import Order "mo:base/Order";
 import Principal "mo:base/Principal";
 import Blob "mo:base/Blob";
-import ID "../util/motoko/ID";
 
 module {
-  public func getICRCBalance(s : W.Subaccount, token : Principal) : W.Balance = switch (RBTree.get(s.icrc1s, Principal.compare, token)) {
+  public func getBalance(s : V.Subaccount, token : Principal) : V.Balance = switch (RBTree.get(s, Principal.compare, token)) {
     case (?found) found;
     case _ ({ unlocked = 0; locked = 0 });
   };
-  public func saveICRCBalance(s : W.Subaccount, token : Principal, b : W.Balance) : W.Subaccount = ({
-    s with icrc1s = RBTree.insert(s.icrc1s, Principal.compare, token, b)
-  });
-  public func getSubaccount(u : W.User, subacc : Blob) : W.Subaccount = switch (RBTree.get(u.subaccs, Blob.compare, subacc)) {
+  public func saveBalance(s : V.Subaccount, token : Principal, b : V.Balance) : V.Subaccount = if (b.unlocked > 0 or b.locked > 0) RBTree.insert(s, Principal.compare, token, b) else RBTree.delete(s, Principal.compare, token);
+
+  public func getSubaccount(u : V.User, subacc : Blob) : V.Subaccount = switch (RBTree.get(u.subaccs, Blob.compare, subacc)) {
     case (?found) found;
-    case _ ({ icrc1s = RBTree.empty() });
+    case _ RBTree.empty();
   };
-  public func saveSubaccount(u : W.User, subacc_id : Blob, subacc : W.Subaccount) : W.User = ({
-    u with subaccs = RBTree.insert(u.subaccs, Blob.compare, subacc_id, subacc)
+  public func saveSubaccount(u : V.User, subacc_id : Blob, subacc : V.Subaccount) : V.User = ({
+    u with subaccs = if (RBTree.size(subacc) > 0) RBTree.insert(u.subaccs, Blob.compare, subacc_id, subacc) else RBTree.delete(u.subaccs, Blob.compare, subacc_id);
   });
-  public func getBalance(asset : W.Asset, s : W.Subaccount) : W.Balance = switch asset {
-    case (#ICRC1 token) getICRCBalance(s, token.canister_id);
+  public func getUser(users : V.Users, p : Principal) : V.User = switch (RBTree.get(users, Principal.compare, p)) {
+    case (?found) found;
+    case _ ({
+      last_activity = 0;
+      subaccs = RBTree.empty();
+    });
   };
-  public func saveBalance(asset : W.Asset, s : W.Subaccount, b : W.Balance) : W.Subaccount = switch asset {
-    case (#ICRC1 token) saveICRCBalance(s, token.canister_id, b);
-  };
-  public func incLock(b : W.Balance, amt : Nat) : W.Balance = {
+  public func saveUser(users : V.Users, p : Principal, u : V.User) : V.Users = if (RBTree.size(u.subaccs) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
+
+  public func incLock(b : V.Balance, amt : Nat) : V.Balance = {
     b with locked = b.locked + amt
   };
-  public func decLock(b : W.Balance, amt : Nat) : W.Balance = {
+  public func decLock(b : V.Balance, amt : Nat) : V.Balance = {
     b with locked = b.locked - amt
   };
-  public func incUnlock(b : W.Balance, amt : Nat) : W.Balance = {
+  public func incUnlock(b : V.Balance, amt : Nat) : V.Balance = {
     b with unlocked = b.unlocked + amt
   };
-  public func decUnlock(b : W.Balance, amt : Nat) : W.Balance = {
+  public func decUnlock(b : V.Balance, amt : Nat) : V.Balance = {
     b with unlocked = b.unlocked - amt
   };
-  public func dedupeICRC(a : (Principal, W.ICRC1TokenArg), b : (Principal, W.ICRC1TokenArg)) : Order.Order = #equal; // todo: finish this, start with time;
+  public func dedupe(a : (Principal, V.TokenArg), b : (Principal, V.TokenArg)) : Order.Order = #equal; // todo: finish this, start with time;
 };

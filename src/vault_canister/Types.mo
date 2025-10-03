@@ -1,7 +1,7 @@
 import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
-import ICRC1Token "../icrc1_canister/Types";
+import Token "../icrc1_canister/Types";
 
 module {
   public let AVAILABLE = "wallet:available";
@@ -11,7 +11,7 @@ module {
   public let PERMITTED_DRIFT = "wallet:permitted_drift";
   public let FEE_COLLECTOR = "wallet:fee_collector";
 
-  public type ICRC1TokenArg = {
+  public type TokenArg = {
     subaccount : ?Blob;
     canister_id : Principal;
     amount : Nat;
@@ -28,7 +28,7 @@ module {
     #CreatedInFuture : { ledger_time : Nat64 };
     #TooOld;
     #Duplicate : { duplicate_of : Nat };
-    #TransferFailed : ICRC1Token.TransferFromError;
+    #TransferFailed : Token.TransferFromError;
   };
   public type DepositRes = Result.Type<Nat, DepositErr>;
 
@@ -40,7 +40,7 @@ module {
     #TooOld;
     #InsufficientFunds : { balance : Nat };
     #Duplicate : { duplicate_of : Nat };
-    #TransferFailed : ICRC1Token.TransferError;
+    #TransferFailed : Token.TransferError;
   };
   public type WithdrawRes = Result.Type<Nat, WithdrawErr>;
 
@@ -48,56 +48,44 @@ module {
     unlocked : Nat;
     locked : Nat;
   };
-  public type Subaccount = {
-    icrc1s : RBTree.Type<Principal, Balance>;
-  };
+  public type Subaccount = RBTree.Type<(canister_id : Principal), Balance>;
   public type User = {
     last_activity : Nat64; // for trimming
     subaccs : RBTree.Type<Blob, Subaccount>;
   };
   public type Users = RBTree.Type<Principal, User>;
-  public type ICRCDedupes = RBTree.Type<(Principal, ICRC1TokenArg), Nat>;
+  public type Dedupes = RBTree.Type<(Principal, TokenArg), Nat>;
 
   public type ArgType = {
-    #DepositICRC : ICRC1TokenArg;
-    #WithdrawICRC : ICRC1TokenArg;
+    #Deposit : TokenArg;
+    #Withdraw : TokenArg;
   };
-  public type ICRC1Token = {
+  public type Token = {
     min_deposit : Nat;
     deposit_fee : Nat;
     withdrawal_fee : Nat;
-  };
-  public type Asset = {
-    #ICRC1 : { canister_id : Principal };
-    // #BTC;
-    // #ETH;
-    // #ERC20 : { contract_address: Text };
   };
   public type Action = {
     // todo: move amount to Instruction
     #Lock;
     #Unlock;
-    #Transfer : { to : ICRC1Token.Account };
+    #Transfer : { to : Token.Account };
   };
   public type ExecuteErr = {
     #GenericError : Error.Type;
-    #UnlistedAsset : { index : Nat };
-    #InsufficientBalance : { index : Nat; balance : Nat };
-    #InvalidTransfer : { index : Nat };
     #ZeroAmount : { index : Nat };
+    #InvalidAccount : { index : Nat };
+    #UnlistedToken : { index : Nat };
+    #InsufficientBalance : { index : Nat; balance : Nat };
+    #InvalidRecipient : { index : Nat };
+    #InvalidTransfer : { index : Nat };
   };
   public type ExecuteRes = Result.Type<Nat, ExecuteErr>;
   public type Instruction = {
-    account : ICRC1Token.Account;
-    asset : Asset;
+    account : Token.Account;
+    token : Principal;
     amount : Nat;
     action : Action;
-  };
-  public type UserData = {
-    owner : Principal;
-    user : User;
-    subacc : Blob;
-    subacc_data : Subaccount;
   };
   public type Actor = actor {
     vault_is_executor : shared Principal -> async Bool;

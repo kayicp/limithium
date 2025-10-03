@@ -27,19 +27,19 @@ shared (install) persistent actor class Canister(
 
   var meta : Value.Metadata = RBTree.empty();
   var users : V.Users = RBTree.empty();
-  var icrc1s = RBTree.empty<Principal, V.ICRC1Token>();
+  var tokens = RBTree.empty<Principal, V.Token>();
   var executors = RBTree.empty<Principal, ()>();
   var blocks = RBTree.empty<Nat, Value.Type>();
 
-  var deposit_icrc2_dedupes : V.ICRCDedupes = RBTree.empty();
-  var withdraw_icrc1_dedupes : V.ICRCDedupes = RBTree.empty();
+  var deposit_dedupes : V.Dedupes = RBTree.empty();
+  var withdraw_dedupes : V.Dedupes = RBTree.empty();
 
-  public shared ({ caller }) func vault_deposit_icrc2(arg : V.ICRC1TokenArg) : async V.DepositRes {
+  public shared ({ caller }) func vault_deposit(arg : V.TokenArg) : async V.DepositRes {
     if (not Value.getBool(meta, V.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
     if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
 
-    let (token_canister, token) = switch (getICRC1(arg.canister_id)) {
+    let (token_canister, token) = switch (getToken(arg.canister_id)) {
       case (?found) found;
       case _ return Error.text("Unsupported token");
     };
@@ -56,11 +56,12 @@ shared (install) persistent actor class Canister(
     let (fee_res, balance_res, allowance_res) = (token_canister.icrc1_fee(), token_canister.icrc1_balance_of(user_acct), token_canister.icrc2_allowance({ account = user_acct; spender = self_acct }));
     let (fee, balance, approval) = (await fee_res, await balance_res, await allowance_res);
     let xfer_amount = arg.amount + token.deposit_fee;
-    if (balance < xfer_amount + fee) return #Err(#InsufficientBalance { balance });
-    if (approval.allowance < xfer_amount) return #Err(#InsufficientAllowance approval);
+    let xfer_and_fee = xfer_amount + fee;
+    if (balance < xfer_and_fee) return #Err(#InsufficientBalance { balance });
+    if (approval.allowance < xfer_and_fee) return #Err(#InsufficientAllowance approval);
 
     let now = Time64.nanos();
-    switch (checkIdempotency(caller, #DepositICRC arg, now, arg.created_at_time)) {
+    switch (checkIdempotency(caller, #Deposit arg, now, arg.created_at_time)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -77,40 +78,39 @@ shared (install) persistent actor class Canister(
       case (#Ok ok) ok;
       case (#Err err) return #Err(#TransferFailed err);
     };
-    var user = getUser(caller);
+    var user = Vault.getUser(users, caller);
     let arg_subacc = Subaccount.get(arg.subaccount);
     var subacc = Vault.getSubaccount(user, arg_subacc);
-    var bal = Vault.getICRCBalance(subacc, arg.canister_id);
-    bal := { bal with unlocked = bal.unlocked + arg.amount };
-    subacc := Vault.saveICRCBalance(subacc, arg.canister_id, bal);
+    var bal = Vault.getBalance(subacc, arg.canister_id);
+    bal := Vault.incUnlock(bal, arg.amount);
+    subacc := Vault.saveBalance(subacc, arg.canister_id, bal);
     user := Vault.saveSubaccount(user, arg_subacc, subacc);
-    user := saveUser(caller, user);
+    users := Vault.saveUser(users, caller, user);
 
     // todo: take fee, but skip since fee is zero
     // todo: blockify
     // todo: save dedupe
     #Ok 1;
   };
-  // todo: deposit/withdraw icrc1_transfer
-  // todo: deposit/withdraw native btc/eth
+  // todo: deposit via icrc1_transfer
 
-  public shared ({ caller }) func vault_withdraw_icrc1(arg : V.ICRC1TokenArg) : async V.WithdrawRes {
+  public shared ({ caller }) func vault_withdraw(arg : V.TokenArg) : async V.WithdrawRes {
     if (not Value.getBool(meta, V.AVAILABLE, true)) return Error.text("Unavailable");
 
     let user_acct = { owner = caller; subaccount = arg.subaccount };
     if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
 
-    let (token_canister, token) = switch (getICRC1(arg.canister_id)) {
+    let (token_canister, token) = switch (getToken(arg.canister_id)) {
       case (?found) found;
       case _ return Error.text("Unsupported token");
     };
     let xfer_fee = await token_canister.icrc1_fee();
     if (token.withdrawal_fee <= xfer_fee) return Error.text("Withdrawal fee must be larger than transfer fee");
 
-    var user = getUser(caller);
+    var user = Vault.getUser(users, caller);
     let arg_subacc = Subaccount.get(arg.subaccount);
     var subacc = Vault.getSubaccount(user, arg_subacc);
-    var bal = Vault.getICRCBalance(subacc, arg.canister_id);
+    var bal = Vault.getBalance(subacc, arg.canister_id);
     let to_lock = arg.amount + token.withdrawal_fee;
     if (bal.unlocked < to_lock) return #Err(#InsufficientBalance { balance = bal.unlocked });
 
@@ -123,17 +123,15 @@ shared (install) persistent actor class Canister(
       case _ ();
     };
     let now = Time64.nanos();
-    switch (checkIdempotency(caller, #WithdrawICRC arg, now, arg.created_at_time)) {
+    switch (checkIdempotency(caller, #Withdraw arg, now, arg.created_at_time)) {
       case (#Err err) return #Err err;
       case _ ();
     };
-    bal := {
-      unlocked = bal.unlocked - to_lock;
-      locked = bal.locked + to_lock;
-    }; // lock to prevent double spending
-    subacc := Vault.saveICRCBalance(subacc, arg.canister_id, bal);
+    bal := Vault.decUnlock(bal, to_lock); // lock to prevent double spending
+    bal := Vault.incLock(bal, to_lock);
+    subacc := Vault.saveBalance(subacc, arg.canister_id, bal);
     user := Vault.saveSubaccount(user, arg_subacc, subacc);
-    user := saveUser(caller, user);
+    users := Vault.saveUser(users, caller, user);
     let xfer_arg = {
       amount = arg.amount;
       to = user_acct;
@@ -143,32 +141,30 @@ shared (install) persistent actor class Canister(
       created_at_time = null;
     };
     let xfer_res = await token_canister.icrc1_transfer(xfer_arg);
-    user := getUser(caller);
+    user := Vault.getUser(users, caller);
     subacc := Vault.getSubaccount(user, arg_subacc);
-    bal := Vault.getICRCBalance(subacc, arg.canister_id);
-    bal := { bal with locked = bal.locked - to_lock }; // release lock
+    bal := Vault.getBalance(subacc, arg.canister_id);
+    bal := Vault.decLock(bal, to_lock); // release lock
     switch xfer_res {
-      case (#Err _) bal := { bal with unlocked = bal.unlocked + to_lock }; // recover fund
-      case _ {};
+      case (#Err _) bal := Vault.incUnlock(bal, to_lock); // recover fund
+      case _ ();
     };
-    subacc := Vault.saveICRCBalance(subacc, arg.canister_id, bal);
+    subacc := Vault.saveBalance(subacc, arg.canister_id, bal);
     user := Vault.saveSubaccount(user, arg_subacc, subacc);
-    user := saveUser(caller, user);
+    users := Vault.saveUser(users, caller, user);
     let xfer_id = switch xfer_res {
       case (#Err err) return #Err(#TransferFailed err);
       case (#Ok ok) ok;
     };
-
     let this_canister = Principal.fromActor(Self);
     let canister_subaccount = Subaccount.get(null);
-    user := getUser(this_canister); // give fee to canister
+    user := Vault.getUser(users, this_canister); // give fee to canister
     subacc := Vault.getSubaccount(user, canister_subaccount);
-    bal := Vault.getICRCBalance(subacc, arg.canister_id);
-    let canister_take = token.withdrawal_fee - xfer_fee;
-    bal := { bal with unlocked = bal.unlocked + canister_take };
-    subacc := Vault.saveICRCBalance(subacc, arg.canister_id, bal);
+    bal := Vault.getBalance(subacc, arg.canister_id);
+    bal := Vault.incUnlock(bal, token.withdrawal_fee - xfer_fee); // canister sponsored the xfer_fee
+    subacc := Vault.saveBalance(subacc, arg.canister_id, bal);
     user := Vault.saveSubaccount(user, canister_subaccount, subacc);
-    user := saveUser(this_canister, user);
+    users := Vault.saveUser(users, this_canister, user);
 
     // todo: blockify
     // todo: save dedupe
@@ -180,86 +176,62 @@ shared (install) persistent actor class Canister(
     if (instructions.size() == 0) return Error.text("Instructions must not be empty");
 
     var lusers : V.Users = RBTree.empty();
+    func getLuser(p : Principal) : V.User = switch (RBTree.get(lusers, Principal.compare, p)) {
+      case (?found) found;
+      case _ Vault.getUser(users, p);
+    };
+    for (index in Iter.range(0, instructions.size() - 1)) {
+      let i = instructions[index];
+      if (i.amount == 0) return #Err(#ZeroAmount { index });
+      if (not ICRC1L.validateAccount(i.account)) return #Err(#InvalidAccount { index });
+      if (not RBTree.has(tokens, Principal.compare, i.token)) return #Err(#UnlistedToken { index });
 
-    func getAccount(acc : ICRC1T.Account) : V.UserData {
-      let user = switch (RBTree.get(lusers, Principal.compare, acc.owner)) {
-        case (?found) found;
-        case _ switch (RBTree.get(users, Principal.compare, acc.owner)) {
-          case (?found) found;
-          case _ ({
-            last_activity = 0 : Nat64;
-            subaccs = RBTree.empty();
-          });
+      var user = getLuser(i.account.owner);
+      var sub = Subaccount.get(i.account.subaccount);
+      var subacc = Vault.getSubaccount(user, sub);
+      var bal = Vault.getBalance(subacc, i.token);
+      switch (i.action) {
+        case (#Lock) {
+          if (bal.unlocked < i.amount) return #Err(#InsufficientBalance { index; balance = bal.unlocked });
+          bal := Vault.decUnlock(bal, i.amount);
+          bal := Vault.incLock(bal, i.amount);
+          subacc := Vault.saveBalance(subacc, i.token, bal);
+          user := Vault.saveSubaccount(user, sub, subacc);
+          lusers := Vault.saveUser(lusers, i.account.owner, user);
+        };
+        case (#Unlock) {
+          if (bal.locked < i.amount) return #Err(#InsufficientBalance { index; balance = bal.locked });
+          bal := Vault.decLock(bal, i.amount);
+          bal := Vault.incUnlock(bal, i.amount);
+          subacc := Vault.saveBalance(subacc, i.token, bal);
+          user := Vault.saveSubaccount(user, sub, subacc);
+          lusers := Vault.saveUser(lusers, i.account.owner, user);
+        };
+        case (#Transfer transfer) {
+          if (bal.unlocked < i.amount) return #Err(#InsufficientBalance { index; balance = bal.unlocked });
+          bal := Vault.decUnlock(bal, i.amount);
+          subacc := Vault.saveBalance(subacc, i.token, bal);
+          user := Vault.saveSubaccount(user, sub, subacc);
+          lusers := Vault.saveUser(lusers, i.account.owner, user);
+
+          if (not ICRC1L.validateAccount(transfer.to)) return #Err(#InvalidRecipient { index });
+          if (ICRC1L.equalAccount(i.account, transfer.to)) return #Err(#InvalidTransfer { index });
+          user := getLuser(transfer.to.owner);
+          sub := Subaccount.get(transfer.to.subaccount);
+          subacc := Vault.getSubaccount(user, sub);
+          bal := Vault.getBalance(subacc, i.token);
+          bal := Vault.incUnlock(bal, i.amount);
+          subacc := Vault.saveBalance(subacc, i.token, bal);
+          user := Vault.saveSubaccount(user, sub, subacc);
+          lusers := Vault.saveUser(lusers, transfer.to.owner, user);
         };
       };
-      let subacc = Subaccount.get(acc.subaccount);
-      let subacc_data = Vault.getSubaccount(user, subacc);
-      { acc with user; subacc; subacc_data };
     };
-    var a = getAccount(instructions[0].account);
-    var asset = instructions[0].asset;
-    var b = Vault.getBalance(asset, a.subacc_data);
-    func reserve<T>(t : T) : T {
-      a := {
-        a with subacc_data = Vault.saveBalance(asset, a.subacc_data, b);
-        user = Vault.saveSubaccount(a.user, a.subacc, a.subacc_data);
-      };
-      lusers := RBTree.insert(lusers, Principal.compare, a.owner, a.user);
-      t;
-    };
-    func execute(index : Nat) : V.ExecuteRes = if (instructions[index].amount > 0) switch (instructions[index].action) {
-      case (#Lock) if (b.unlocked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.unlocked }) else {
-        b := Vault.decUnlock(b, instructions[index].amount);
-        b := Vault.incLock(b, instructions[index].amount);
-        reserve(#Ok index);
-      };
-      case (#Unlock) if (b.locked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.locked }) else {
-        b := Vault.decLock(b, instructions[index].amount);
-        b := Vault.incUnlock(b, instructions[index].amount);
-        reserve(#Ok index);
-      };
-      case (#Transfer action) {
-        if (b.unlocked < instructions[index].amount) return #Err(#InsufficientBalance { index; balance = b.unlocked });
-        if (ICRC1L.equalAccount(instructions[index].account, action.to)) return #Err(#InvalidTransfer { index });
-        b := Vault.decUnlock(b, instructions[index].amount);
-        reserve();
-
-        a := getAccount(action.to);
-        b := Vault.getBalance(asset, a.subacc_data);
-        b := Vault.incUnlock(b, instructions[index].amount);
-        reserve(#Ok index);
-      };
-    } else return #Err(#ZeroAmount { index });
-    switch (execute(0)) {
-      case (#Err err) return #Err err;
-      case _ ();
-    };
-    for (i in Iter.range(1, instructions.size() - 1)) {
-      a := getAccount(instructions[i].account);
-      asset := instructions[i].asset;
-      b := Vault.getBalance(asset, a.subacc_data);
-      switch (execute(i)) {
-        case (#Err err) return #Err err;
-        case _ ();
-      };
-    };
-    for ((k, v) in RBTree.entries(lusers)) users := RBTree.insert(users, Principal.compare, k, v);
-
+    for ((k, v) in RBTree.entries(lusers)) users := Vault.saveUser(users, k, v);
     // todo: blockify
     #Ok 1;
   };
 
-  func getUser(p : Principal) : V.User = switch (RBTree.get(users, Principal.compare, p)) {
-    case (?found) found;
-    case _ ({
-      last_activity = 0;
-      subaccs = RBTree.empty();
-    });
-  };
-  func saveUser(p : Principal, u : V.User) : V.User {
-    users := RBTree.insert(users, Principal.compare, p, u);
-    u;
-  };
   func checkMemo(m : ?Blob) : Result.Type<(), Error.Generic> = switch m {
     case (?defined) {
       var min_memo_size = Value.getNat(meta, V.MIN_MEMO, 1);
@@ -299,8 +271,8 @@ shared (install) persistent actor class Canister(
         let end_time = now + permitted_drift;
         if (created_time > end_time) return #Err(#CreatedInFuture { ledger_time = now });
         let (map, comparer, arg) = switch opr {
-          case (#DepositICRC depo) (deposit_icrc2_dedupes, Vault.dedupeICRC, depo);
-          case (#WithdrawICRC draw) (withdraw_icrc1_dedupes, Vault.dedupeICRC, draw);
+          case (#Deposit depo) (deposit_dedupes, Vault.dedupe, depo);
+          case (#Withdraw draw) (withdraw_dedupes, Vault.dedupe, draw);
         };
         switch (RBTree.get(map, comparer, (caller, arg))) {
           case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
@@ -310,12 +282,12 @@ shared (install) persistent actor class Canister(
       case _ #Ok;
     };
   };
-  func getICRC1(p : Principal) : ?(ICRC1.Canister, V.ICRC1Token) = switch (RBTree.get(icrc1s, Principal.compare, p)) {
+  func getToken(p : Principal) : ?(ICRC1.Canister, V.Token) = switch (RBTree.get(tokens, Principal.compare, p)) {
     case (?found) ?(actor (Principal.toText(p)), found);
     case _ null;
   };
 
-  public shared ({ caller }) func vault_enlist_icrc1({
+  public shared ({ caller }) func vault_enlist_token({
     canister_id : Principal;
     min_deposit : Nat;
     deposit_fee : Nat;
@@ -331,20 +303,20 @@ shared (install) persistent actor class Canister(
 
     if (min_deposit <= withdrawal_fee) return Error.text("min_deposit must be larger than withdrawal_fee");
 
-    let config = switch (RBTree.get(icrc1s, Principal.compare, canister_id)) {
+    let config = switch (RBTree.get(tokens, Principal.compare, canister_id)) {
       case (?found) ({ found with min_deposit; deposit_fee; withdrawal_fee });
       case _ ({ min_deposit; deposit_fee; withdrawal_fee });
     };
-    icrc1s := RBTree.insert(icrc1s, Principal.compare, canister_id, config);
+    tokens := RBTree.insert(tokens, Principal.compare, canister_id, config);
     #Ok;
   };
 
-  public shared ({ caller }) func vault_delist_icrc1({
+  public shared ({ caller }) func vault_delist_token({
     canister_id : Principal;
   }) : async Result.Type<(), Error.Generic> {
     if (not Principal.isController(caller)) return Error.text("Caller is not controller");
 
-    icrc1s := RBTree.delete(icrc1s, Principal.compare, canister_id);
+    tokens := RBTree.delete(tokens, Principal.compare, canister_id);
     #Ok;
   };
 
