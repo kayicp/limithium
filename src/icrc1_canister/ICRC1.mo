@@ -77,11 +77,20 @@ module {
     var fee = Value.getNat(meta, I.FEE, 0);
     if (fee < 1) {
       fee := 1;
-      meta := Value.setNat(meta, I.FEE, ?1);
+      meta := Value.setNat(meta, I.FEE, ?fee);
+    };
+    let total_supply = Value.getNat(meta, I.TOTAL_SUPPLY, 0);
+    let min_supply = 1_000_000 * fee;
+    if (total_supply < min_supply) return #Err("Metadata `" # I.TOTAL_SUPPLY # "` must be at least " # debug_show min_supply);
+    var max_mint = Value.getNat(meta, I.MAX_MINT, 0);
+    if (max_mint < fee) {
+      max_mint := fee;
+      meta := Value.setNat(meta, I.MAX_MINT, ?max_mint);
     };
     let now = Time64.nanos();
-    #Ok { meta; minter; fee; now };
+    #Ok { meta; minter; fee; now; max_mint; total_supply };
   };
+
   public func getExpiry(_meta : Value.Metadata, now : Nat64) : {
     max : Nat64;
     meta : Value.Metadata;

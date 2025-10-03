@@ -29,6 +29,9 @@ shared (install) persistent actor class Canister(
   var approve_dedupes = RBTree.empty<(Principal, I.ApproveArg), Nat>();
   var transfer_from_dedupes = RBTree.empty<(Principal, I.TransferFromArg), Nat>();
 
+  var prev_mint : ?Nat = null;
+  var mint_queue = RBTree.empty<Nat, I.Enqueue>();
+
   public shared ({ caller }) func icrc1_transfer(arg : I.TransferArg) : async Result.Type<Nat, I.TransferError> {
     // if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
     let from = { owner = caller; subaccount = arg.from_subaccount };
@@ -224,8 +227,6 @@ shared (install) persistent actor class Canister(
     #Ok 1;
   };
 
-  var mint_qid = 0;
-  var mint_queue = RBTree.empty<Nat, I.Enqueue>();
   public shared ({ caller }) func lmtm_enqueue_minting_rounds(enqueues : [I.Enqueue]) : async Result.Type<(), I.EnqueueErrors> {
     // if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
     let vault_id = switch (Value.metaPrincipal(meta, I.VAULT)) {
@@ -243,49 +244,62 @@ shared (install) persistent actor class Canister(
       case (#Err err) return Error.text(err);
     };
     meta := env.meta;
-    let total_supply = Value.getNat(meta, I.TOTAL_SUPPLY, 0);
-    if (10_000 * env.fee > total_supply) return Error.text("Metadata `" # I.TOTAL_SUPPLY # "` must be at least 10,000 times bigger than the fee");
 
-    let max_mint = 10 * env.fee;
-    label distributing for (i in Iter.range(0, enqueues.size() - 1)) {
-      let q = enqueues[i];
-      if (q.rounds == 0) continue distributing;
-      if (not ICRC1.validateAccount(q.account)) continue distributing;
-      if (ICRC1.equalAccount(q.account, env.minter)) continue distributing;
-
-      var user = getUser(env.minter.owner); // take from minter
-      var sub = Subaccount.get(env.minter.subaccount);
-      var subacc = ICRC1.getSubaccount(user, sub);
-
-      if (subacc.balance == 0) {
-        mint_queue := RBTree.insert(mint_queue, Nat.compare, mint_qid, q);
-        mint_qid += 1;
-        continue distributing;
-      };
-      let mint = (max_mint * subacc.balance) / total_supply;
-      if (mint == 0) {
-        mint_queue := RBTree.insert(mint_queue, Nat.compare, mint_qid, q);
-        mint_qid += 1;
-        continue distributing;
-      };
-      subacc := ICRC1.decBalance(subacc, mint);
-      user := ICRC1.saveSubaccount(user, sub, subacc);
-      user := saveUser(env.minter.owner, user);
-
-      user := getUser(q.account.owner); // give to user
-      sub := Subaccount.get(q.account.subaccount);
-      subacc := ICRC1.getSubaccount(user, sub);
-      subacc := ICRC1.incBalance(subacc, mint);
-      user := ICRC1.saveSubaccount(user, sub, subacc);
-      user := saveUser(q.account.owner, user);
-
-      // todo: blockify
-
-      if (q.rounds == 1) continue distributing; // done mint, no enqueue
-      mint_queue := RBTree.insert(mint_queue, Nat.compare, mint_qid, { q with rounds = q.rounds - 1 }); // safe, rounds > 1
-      mint_qid += 1;
+    var id = switch (RBTree.maxKey(mint_queue)) {
+      case (?max) max + 1;
+      case _ 0;
     };
+    label filtering for (i in Iter.range(0, enqueues.size() - 1)) {
+      let q = enqueues[i];
+      if (q.rounds == 0) continue filtering;
+      if (not ICRC1.validateAccount(q.account)) continue filtering;
+      if (ICRC1.equalAccount(q.account, env.minter)) continue filtering;
+      mint_queue := RBTree.insert(mint_queue, Nat.compare, id, q);
+      id += 1;
+    };
+    mint_rounds(env);
     #Ok;
+  };
+
+  func mint_rounds(env : I.Environment) = for (i in Iter.range(0, 100 - 1)) switch prev_mint {
+    case (?prev) switch (RBTree.right(mint_queue, Nat.compare, prev)) {
+      case (?(next, nextq)) if (mint_round(next, nextq, env)) prev_mint := ?next else return;
+      case _ prev_mint := null;
+    };
+    case _ switch (RBTree.min(mint_queue)) {
+      case (?(min, minq)) if (mint_round(min, minq, env)) prev_mint := ?min else return;
+      case _ return;
+    };
+  };
+
+  func mint_round(qid : Nat, q : I.Enqueue, env : I.Environment) : Bool {
+    if (q.rounds == 0) {
+      mint_queue := RBTree.delete(mint_queue, Nat.compare, qid);
+      return true;
+    };
+    var user = getUser(env.minter.owner); // take from minter
+    var sub = Subaccount.get(env.minter.subaccount);
+    var subacc = ICRC1.getSubaccount(user, sub);
+
+    if (subacc.balance == 0) return false; // not mintable
+    let mint = Nat.max((env.max_mint * subacc.balance) / env.total_supply, 1);
+    subacc := ICRC1.decBalance(subacc, mint);
+    user := ICRC1.saveSubaccount(user, sub, subacc);
+    user := saveUser(env.minter.owner, user);
+
+    user := getUser(q.account.owner); // give to user
+    sub := Subaccount.get(q.account.subaccount);
+    subacc := ICRC1.getSubaccount(user, sub);
+    subacc := ICRC1.incBalance(subacc, mint);
+    user := ICRC1.saveSubaccount(user, sub, subacc);
+    user := saveUser(q.account.owner, user);
+
+    // todo: blockify
+
+    mint_queue := if (q.rounds > 1) {
+      RBTree.insert(mint_queue, Nat.compare, qid, { q with rounds = q.rounds - 1 });
+    } else RBTree.delete(mint_queue, Nat.compare, qid); // done minting, remove it
+    return true;
   };
 
   public shared query func icrc1_name() : async Text = async "Limithium";

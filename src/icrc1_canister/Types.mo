@@ -15,6 +15,7 @@ module {
   public let MIN_APPROVAL_EXPIRY = "icrc1:min_approval_expiry";
   public let DEFAULT_APPROVAL_EXPIRY = "icrc1:default_approval_expiry";
   public let VAULT = "lmtm:vault";
+  public let MAX_MINT = "lmtm:max_mint_per_round";
 
   public type Account = { owner : Principal; subaccount : ?Blob };
   public type Approval = { allowance : Nat; expires_at : Nat64 };
@@ -115,6 +116,8 @@ module {
     meta : Value.Metadata;
     minter : Account;
     fee : Nat;
+    max_mint : Nat;
+    total_supply : Nat;
     now : Nat64;
   };
 
