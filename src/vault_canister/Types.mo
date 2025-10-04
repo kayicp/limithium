@@ -80,7 +80,8 @@ module {
     #InvalidRecipient : { index : Nat };
     #InvalidTransfer : { index : Nat };
   };
-  public type ExecuteRes = Result.Type<Nat, ExecuteErr>;
+  public type AggregateRes = Result.Type<Nat, ExecuteErr>;
+  public type GranularRes = Result.Type<[Nat], ExecuteErr>;
   public type Instruction = {
     account : Token.Account;
     token : Principal;

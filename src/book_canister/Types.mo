@@ -1,18 +1,17 @@
 import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
-import ID "../util/motoko/ID";
 import V "../vault_canister/Types";
+import Vault "../vault_canister/main";
 import Value "../util/motoko/Value";
-import Account "../util/motoko/ICRC-1/Account";
 
 module {
   public let AVAILABLE = "book:available";
   public let MAX_ORDER_BATCH = "book:max_order_batch_size";
 
-  public let WALLET = "book:wallet_canister_id";
-  public let BASE_TOKEN = "icrc1_icrc1_orderbook:base_canister_id";
-  public let QUOTE_TOKEN = "icrc1_icrc1_orderbook:quote_canister_id";
+  public let VAULT = "book:wallet_canister_id";
+  public let BASE_TOKEN = "book:base_token_id";
+  public let QUOTE_TOKEN = "book:quote_token_id";
 
   public let AMOUNT_TICK = "book:amount_tick";
   public let PRICE_TICK = "book:price_tick";
@@ -40,9 +39,10 @@ module {
   public let FEE_COLLECTOR = "book:fee_collector";
 
   // todo: add `block_id` to order and trade object
-  public type Expiries = RBTree.Type<Nat64, ID.Many<()>>;
+  public type Nats = RBTree.Type<Nat, ()>;
+  public type Expiries = RBTree.Type<Nat64, Nats>;
   public type Amount = { initial : Nat; locked : Nat; filled : Nat };
-  public type Price = { base : Amount; orders : ID.Many<()> };
+  public type Price = { base : Amount; orders : Nats };
   public type Book = RBTree.Type<(price : Nat), Price>;
   public type Trade = {
     sell : { id : Nat; base : Nat; fee_quote : Nat };
@@ -69,10 +69,11 @@ module {
     owner : Principal;
     subaccount : ?Blob;
     created_at : Nat64;
-    trades : ID.Many<()>;
+    proof : Nat;
+    trades : Nats;
   };
   public type Subaccount = {
-    orders : ID.Many<()>;
+    orders : Nats;
     // note: cant place order on same price
     sells : RBTree.Type<(price : Nat), (order : Nat)>;
     base : Amount;
@@ -161,6 +162,7 @@ module {
 
   public type Environment = {
     meta : Value.Metadata;
+    vault : Vault.Canister;
     amount_tick : Nat;
     base_token_id : Principal;
     default_expires_at : Nat64;

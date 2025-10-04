@@ -1,12 +1,12 @@
 import B "Types";
 import Book "Book";
-import Vault "../vault_canister/main";
 import V "../vault_canister/Types";
+
+import ICRC1T "../icrc1_canister/Types";
+import ICRC1L "../icrc1_canister/ICRC1";
 import Value "../util/motoko/Value";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Error "../util/motoko/Error";
-import Account "../util/motoko/ICRC-1/Account";
-import ID "../util/motoko/ID";
 import Principal "mo:base/Principal";
 import Blob "mo:base/Blob";
 import Nat64 "mo:base/Nat64";
@@ -16,6 +16,7 @@ import Option "mo:base/Option";
 import Buffer "mo:base/Buffer";
 import Result "../util/motoko/Result";
 import Time64 "../util/motoko/Time64";
+import Subaccount "../util/motoko/Subaccount";
 
 shared (install) persistent actor class Canister(
   // deploy : {
@@ -27,7 +28,7 @@ shared (install) persistent actor class Canister(
   var users : B.Users = RBTree.empty();
 
   var order_id = 0;
-  var orders = ID.empty<B.Order>();
+  var orders = RBTree.empty<Nat, B.Order>();
   var orders_by_expiry : B.Expiries = RBTree.empty();
 
   var base = Book.newAmount(0); // sell unit
@@ -54,7 +55,7 @@ shared (install) persistent actor class Canister(
   public shared ({ caller }) func book_open(arg : B.PlaceArg) : async B.PlaceRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
-    if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
+    if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
 
     if (arg.orders.size() == 0) return Error.text("Orders must not be empty");
     let max_batch = Value.getNat(meta, B.MAX_ORDER_BATCH, 0);
@@ -70,6 +71,7 @@ shared (install) persistent actor class Canister(
     var lbase = 0;
     var lbuys = RBTree.empty<(price : Nat), { index : Nat; expiry : Nat64 }>();
     var lquote = 0;
+    let instructions_buff = Buffer.Buffer<V.Instruction>(arg.orders.size());
     for (index in Iter.range(0, arg.orders.size() - 1)) {
       let o = arg.orders[index];
       let o_expiry = Option.get(o.expires_at, env.default_expires_at);
@@ -87,13 +89,15 @@ shared (install) persistent actor class Canister(
       let nearest_amount = Book.nearTick(o.amount, env.amount_tick);
       if (o.amount != nearest_amount) return #Err(#AmountTooFar { index; nearest_amount });
 
-      if (o.is_buy) {
+      let instruction = if (o.is_buy) {
         switch (RBTree.get(lbuys, Nat.compare, o.price)) {
           case (?found) return #Err(#DuplicatePrice { indexes = [found.index, index] });
           case _ ();
         };
-        lquote += (o.amount * o.price);
+        let lq = o.amount * o.price;
+        lquote += lq;
         lbuys := RBTree.insert(lbuys, Nat.compare, o.price, { index; expiry = o_expiry });
+        { token = env.quote_token_id; amount = lq };
       } else {
         switch (RBTree.get(lsells, Nat.compare, o.price)) {
           case (?found) return #Err(#DuplicatePrice { indexes = [found.index, index] });
@@ -101,19 +105,22 @@ shared (install) persistent actor class Canister(
         };
         lbase += o.amount;
         lsells := RBTree.insert(lsells, Nat.compare, o.price, { index; expiry = o_expiry });
+        { o with token = env.base_token_id };
       };
+      instructions_buff.add({
+        instruction with account = user_acct;
+        action = #Lock;
+      });
     };
-
     let min_lsell = RBTree.min(lsells);
     let max_lbuy = RBTree.max(lbuys);
     switch (min_lsell, max_lbuy) {
       case (?(lsell_price, lsell), ?(lbuy_price, lbuy)) if (lsell_price <= lbuy_price) return #Err(#PriceOverlap { sell_index = lsell.index; buy_index = lbuy.index });
       case _ (); // one of trees is empty : no overlap
     };
-
     var user = getUser(caller);
-    let arg_subacc = Account.denull(arg.subaccount);
-    var subacc = Book.getSubaccount(user, arg_subacc);
+    let sub = Subaccount.get(arg.subaccount);
+    var subacc = Book.getSubaccount(user, sub);
 
     let min_gsell = RBTree.min(subacc.sells);
     let max_gbuy = RBTree.max(subacc.buys);
@@ -150,40 +157,23 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    let wallet = switch (Value.metaPrincipal(meta, B.WALLET)) {
-      case (?found) actor (Principal.toText(found)) : Vault.Canister;
-      case _ return Error.text("Metadata `" # B.WALLET # "` not properly set");
-    };
-    // todo: check balance first ? lock/reserve user too
-    let instructions_buff = Buffer.Buffer<V.Instruction>(2);
-    if (lbase > 0) instructions_buff.add({
-      account = user_acct;
-      asset = #ICRC1 { canister_id = env.base_token_id };
-      amount = lbase;
-      action = #Lock;
-    });
-    if (lquote > 0) instructions_buff.add({
-      account = user_acct;
-      asset = #ICRC1 { canister_id = env.quote_token_id };
-      amount = lquote;
-      action = #Lock;
-    });
+    // todo: check balance first ?
     let instructions = Buffer.toArray(instructions_buff);
-    // todo: reserve user subaccount first
-    let lock_id = switch (await wallet.vault_execute(instructions)) {
+    // todo: save user subaccount first
+    let lock_ids = switch (await env.vault.vault_execute_granular(instructions)) {
       case (#Err err) return #Err(#ExecutionFailed { instructions; error = err });
       case (#Ok ok) ok;
     };
     base := Book.incAmount(base, Book.newAmount(lbase));
     quote := Book.incAmount(quote, Book.newAmount(lquote));
-    var lorders = ID.empty<B.Order>(); // for blockify
+    var lorders = RBTree.empty<Nat, B.Order>(); // for blockify
     func newOrder(o : { index : Nat; expiry : Nat64 }) : B.Order {
-      let new_order = Book.newOrder(env.now, { arg.orders[o.index] with owner = caller; subaccount = arg.subaccount; expires_at = o.expiry });
-      orders := ID.insert(orders, order_id, new_order);
-      lorders := ID.insert(lorders, order_id, new_order);
+      let new_order = Book.newOrder(lock_ids[o.index], env.now, { arg.orders[o.index] with owner = caller; subaccount = arg.subaccount; expires_at = o.expiry });
+      orders := RBTree.insert(orders, Nat.compare, order_id, new_order);
+      lorders := RBTree.insert(lorders, Nat.compare, order_id, new_order);
 
       var expiries = Book.getExpiries(orders_by_expiry, o.expiry);
-      expiries := ID.insert(expiries, order_id, ());
+      expiries := RBTree.insert(expiries, Nat.compare, order_id, ());
       orders_by_expiry := Book.saveExpiries(orders_by_expiry, o.expiry, expiries);
       new_order;
     };
@@ -195,7 +185,7 @@ shared (install) persistent actor class Canister(
       subacc := Book.subaccNewSell(subacc, order_id, new_order);
       order_id += 1;
     };
-    for ((o_price, o) in RBTree.entries(lbuys)) {
+    for ((o_price, o) in RBTree.entriesReverse(lbuys)) {
       let new_order = newOrder(o);
       var price = Book.getLevel(buy_book, o_price);
       price := Book.levelNewOrder(price, order_id, new_order);
@@ -203,7 +193,7 @@ shared (install) persistent actor class Canister(
       subacc := Book.subaccNewBuy(subacc, order_id, new_order);
       order_id += 1;
     };
-    user := Book.saveSubaccount(user, arg_subacc, subacc);
+    user := Book.saveSubaccount(user, sub, subacc);
     user := saveUser(caller, user);
 
     // todo: blockify
@@ -214,7 +204,7 @@ shared (install) persistent actor class Canister(
   public shared ({ caller }) func book_close(arg : B.CancelArg) : async B.CancelRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
-    if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
+    if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
 
     if (arg.orders.size() == 0) return Error.text("Orders must not be empty");
 
@@ -231,18 +221,20 @@ shared (install) persistent actor class Canister(
     let fee_quote = Value.getNat(meta, B.CANCEL_FEE_QUOTE, 0);
     // todo: dont check from user first, but check from orders right away only then check from user
     var user = getUser(caller);
-    let arg_subacc = Account.denull(arg.subaccount);
-    var subacc = Book.getSubaccount(user, arg_subacc);
+    let sub = Subaccount.get(arg.subaccount);
+    var subacc = Book.getSubaccount(user, sub);
     let now = Time64.nanos();
     var fbase = 0;
     var fquote = 0;
     let fee_collector = getFeeCollector();
 
-    var lorders = ID.empty<{ index : Nat; data : B.Order }>();
+    var lorders = RBTree.empty<Nat, { index : Nat; data : B.Order }>();
     // var lorders_by_expiry : B.Expiries = RBTree.empty();
+    let instructions_buff = Buffer.Buffer<V.Instruction>(arg.orders.size() + 2);
+    let instructions_indexes = Buffer.Buffer<?Nat>(arg.orders.size());
     for (index in Iter.range(0, arg.orders.size() - 1)) {
       let i = arg.orders[index];
-      switch (ID.get(lorders, i)) {
+      switch (RBTree.get(lorders, Nat.compare, i)) {
         case (?found) return #Err(#Duplicate { indexes = [found.index, index] });
         case _ ();
       };
@@ -257,14 +249,20 @@ shared (install) persistent actor class Canister(
       };
       if (o.base.locked > 0) return #Err(#Locked { index });
       let reason = if (o.base.initial > o.base.filled) {
-        let remain = o.base.initial - o.base.filled;
-        o := Book.lockOrder(o, remain);
-        let (amt, fee) = if (o.is_buy) (remain * o.price, fee_quote) else (remain, fee_base);
+        let unfilled = o.base.initial - o.base.filled;
+        o := Book.lockOrder(o, unfilled);
+        let (amt, fee, tkn) = if (o.is_buy) (unfilled * o.price, fee_quote, env.quote_token_id) else (unfilled, fee_base, env.base_token_id);
+        instructions_buff.add({
+          account = user_acct;
+          token = tkn;
+          action = #Unlock;
+          amount = amt;
+        });
         if (o.expires_at < now) #Expired else if (amt > fee) #Canceled else #Filled;
-      } else #Filled;
+      } else #Filled; // todo: no instruction, careful with the index
       if (reason == #Canceled) if (o.is_buy) fquote += fee_quote else fbase += fee_base;
       // o := { o with closed = ?{ at = now; reason } }; // todo: do this after execution successful
-      lorders := ID.insert(lorders, i, { index; data = o });
+      lorders := RBTree.insert(lorders, Nat.compare, i, { index; data = o });
     };
     switch (arg.fee) {
       case (?defined) if (defined.base != fbase or defined.quote != fquote) return #Err(#BadFee { expected_base = fbase; expected_quote = fquote });
@@ -274,15 +272,11 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    let wallet = switch (Value.metaPrincipal(meta, B.WALLET)) {
-      case (?found) actor (Principal.toText(found)) : Vault.Canister;
-      case _ return Error.text("Metadata `" # B.WALLET # "` not properly set");
-    };
     // todo: check balance first before locking?
     var lbase = 0;
     var lquote = 0;
     for ((oid, o) in RBTree.entries(lorders)) {
-      orders := ID.insert(orders, oid, o.data);
+      orders := RBTree.insert(orders, Nat.compare, oid, o.data);
       // var expiries = Book.getExpiries(lorders_by_expiry, o.expires_at);
       // if (RBTree.size(expiries) == 0) expiries := Book.getExpiries(orders_by_expiry, o.expires_at);
       // expiries := RBTree.delete(expiries, Nat.compare, i);
@@ -312,43 +306,27 @@ shared (install) persistent actor class Canister(
         lbase += o.data.base.locked;
       };
     };
-    user := Book.saveSubaccount(user, arg_subacc, subacc);
+    user := Book.saveSubaccount(user, sub, subacc);
     user := saveUser(caller, user);
-    // todo: dont execute if both is 0
-    let instructions_buff = Buffer.Buffer<V.Instruction>(4);
-    if (lbase > 0) {
-      var instruction = {
-        account = user_acct;
-        asset = #ICRC1 { canister_id = env.base_token_id };
-        amount = lbase;
-        action = #Unlock;
-      };
-      instructions_buff.add(instruction);
-      if (fbase > 0) instructions_buff.add({
-        instruction with amount = fbase;
-        action = #Transfer { to = fee_collector };
-      });
-    };
-    if (lquote > 0) {
-      var instruction = {
-        account = user_acct;
-        asset = #ICRC1 { canister_id = env.quote_token_id };
-        amount = lquote;
-        action = #Unlock;
-      };
-      instructions_buff.add(instruction);
-      if (fquote > 0) instructions_buff.add({
-        instruction with amount = fquote;
-        action = #Transfer { to = fee_collector };
-      });
-    };
+    if (fbase > 0) instructions_buff.add({
+      account = user_acct;
+      token = env.base_token_id;
+      amount = fbase;
+      action = #Transfer { to = fee_collector };
+    });
+    if (fquote > 0) instructions_buff.add({
+      account = user_acct;
+      token = env.quote_token_id;
+      amount = fquote;
+      action = #Transfer { to = fee_collector };
+    });
     let instructions = Buffer.toArray(instructions_buff);
-    let unlock_id = switch (await wallet.vault_execute(instructions)) {
+    let unlock_id = switch (await env.vault.vault_execute_granular(instructions)) {
       case (#Err err) return #Err(#ExecutionFailed { instructions; error = err }); // todo: unlock/rollback
       case (#Ok ok) ok;
     };
     user := getUser(caller);
-    subacc := Book.getSubaccount(user, arg_subacc);
+    subacc := Book.getSubaccount(user, sub);
 
     // todo: blockify
 
@@ -418,7 +396,7 @@ shared (install) persistent actor class Canister(
   public shared ({ caller }) func book_run(arg : B.RunArg) : async B.RunRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
-    if (not Account.validate(user_acct)) return Error.text("Caller account is not valid");
+    if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
     // switch max_book {
     //   case (?found) switch (RBTree.maxKey(orders)) {
     //     case (?max_oid) if (max_oid == found) return await* run() else if (max_oid > found) {
@@ -437,7 +415,7 @@ shared (install) persistent actor class Canister(
     Error.text("No job available");
   };
 
-  func getFeeCollector() : Account.Pair = {
+  func getFeeCollector() : ICRC1T.Account = {
     subaccount = null;
     owner = switch (Value.metaPrincipal(meta, B.FEE_COLLECTOR)) {
       case (?found) found;
@@ -446,10 +424,6 @@ shared (install) persistent actor class Canister(
   };
 
   func run() : async* B.RunRes {
-    let wallet = switch (Value.metaPrincipal(meta, B.WALLET)) {
-      case (?found) actor (Principal.toText(found)) : Vault.Canister;
-      case _ return Error.text("Metadata `" # B.WALLET # "` not properly set");
-    };
     let env = switch (await* Book.getEnvironment(meta)) {
       case (#Err err) return #Err err;
       case (#Ok ok) ok;
@@ -465,7 +439,7 @@ shared (install) persistent actor class Canister(
     };
     let fee_collector = getFeeCollector();
     label matching while (true) {
-      let move_sell = switch (await* match0(wallet, fee_collector, env, (sell_p.key, sell_p.lvl), (buy_p.key, buy_p.lvl))) {
+      let move_sell = switch (await* match0(fee_collector, env, (sell_p.key, sell_p.lvl), (buy_p.key, buy_p.lvl))) {
         case (#Rest) break matching;
         case (#Ok ok) return #Ok ok;
         case (#Err err) return #Err err;
@@ -488,7 +462,7 @@ shared (install) persistent actor class Canister(
     Error.text("No job available");
   };
 
-  func match0(wallet : Vault.Canister, fee_collector : Account.Pair, env : B.Environment, (sell_p : Nat, _sell_lvl : B.Price), (buy_p : Nat, _buy_lvl : B.Price)) : async* {
+  func match0(fee_collector : ICRC1T.Account, env : B.Environment, (sell_p : Nat, _sell_lvl : B.Price), (buy_p : Nat, _buy_lvl : B.Price)) : async* {
     #Rest;
     #Ok : Nat;
     #Err : B.RunErr;
@@ -513,7 +487,7 @@ shared (install) persistent actor class Canister(
       };
     };
     label matching while true {
-      let move_buy = switch (await* match1(wallet, fee_collector, env, (sell_id, sell_p, sell_lvl), (buy_id, buy_p, buy_lvl))) {
+      let move_buy = switch (await* match1(fee_collector, env, (sell_id, sell_p, sell_lvl), (buy_id, buy_p, buy_lvl))) {
         case (#Rest) return #Rest;
         case (#Ok ok) return #Ok ok;
         case (#Err err) return #Err err;
@@ -537,11 +511,11 @@ shared (install) persistent actor class Canister(
     #Rest;
   };
 
-  func close(reason : { #Expired; #Filled }, oid : Nat, _o : B.Order, _lvl : B.Price, remain : Nat, wallet : Vault.Canister, env : B.Environment) : async* B.RunRes {
+  func close(reason : { #Expired; #Filled }, oid : Nat, _o : B.Order, _lvl : B.Price, remain : Nat, env : B.Environment) : async* B.RunRes {
     var o = _o;
     var lvl = _lvl;
     var user = getUser(o.owner);
-    let subacc_key = Account.denull(o.subaccount);
+    let subacc_key = Subaccount.get(o.subaccount);
     var subacc = Book.getSubaccount(user, subacc_key);
     func execClose(proof : ?Nat) {
       o := { o with closed = ?{ at = env.now; reason; proof } };
@@ -610,11 +584,11 @@ shared (install) persistent actor class Canister(
     };
     let instruction = {
       account = o;
-      asset = #ICRC1 { canister_id = cid };
+      token = cid;
       amount = amt;
       action = #Unlock;
     };
-    try switch (await wallet.vault_execute([instruction])) {
+    try switch (await env.vault.vault_execute_aggregate([instruction])) {
       case (#Err err) {
         unlockClose();
         saveClose(false);
@@ -634,7 +608,7 @@ shared (install) persistent actor class Canister(
     };
   };
 
-  func match1(wallet : Vault.Canister, fee_collector : Account.Pair, env : B.Environment, (sell_id : Nat, sell_p : Nat, _sell_lvl : B.Price), (buy_id : Nat, buy_p : Nat, _buy_lvl : B.Price)) : async* {
+  func match1(fee_collector : ICRC1T.Account, env : B.Environment, (sell_id : Nat, sell_p : Nat, _sell_lvl : B.Price), (buy_id : Nat, buy_p : Nat, _buy_lvl : B.Price)) : async* {
     #Rest;
     #Ok : Nat; // worked
     #Err : B.RunErr;
@@ -663,8 +637,8 @@ shared (install) persistent actor class Canister(
     if (sell_o.closed != null) return #Closed false;
     if (sell_o.base.locked > 0) return #Next false;
     let sell_remain = if (sell_o.base.initial > sell_o.base.filled) sell_o.base.initial - sell_o.base.filled else 0;
-    if (sell_o.expires_at < env.now) return await* close(#Expired, sell_id, sell_o, _sell_lvl, sell_remain, wallet, env);
-    if (sell_remain < env.min_base_amount) return await* close(#Filled, sell_id, sell_o, _sell_lvl, sell_remain, wallet, env);
+    if (sell_o.expires_at < env.now) return await* close(#Expired, sell_id, sell_o, _sell_lvl, sell_remain, env);
+    if (sell_remain < env.min_base_amount) return await* close(#Filled, sell_id, sell_o, _sell_lvl, sell_remain, env);
 
     var buy_o = switch (RBTree.get(orders, Nat.compare, buy_id)) {
       case (?found) found;
@@ -680,20 +654,20 @@ shared (install) persistent actor class Canister(
     if (buy_o.closed != null) return #Closed true;
     if (buy_o.base.locked > 0) return #Next true;
     let buy_remain = if (buy_o.base.initial > buy_o.base.filled) buy_o.base.initial - buy_o.base.filled else 0;
-    if (buy_o.expires_at < env.now) return await* close(#Expired, buy_id, buy_o, _buy_lvl, buy_remain, wallet, env);
-    if (buy_remain < env.min_base_amount) return await* close(#Filled, buy_id, buy_o, _buy_lvl, buy_remain, wallet, env);
+    if (buy_o.expires_at < env.now) return await* close(#Expired, buy_id, buy_o, _buy_lvl, buy_remain, env);
+    if (buy_remain < env.min_base_amount) return await* close(#Filled, buy_id, buy_o, _buy_lvl, buy_remain, env);
 
     let sell_maker = sell_id < buy_id;
     let p = if (sell_maker) sell_o.price else buy_o.price;
-    if (sell_remain * p < env.min_quote_amount) return await* close(#Filled, sell_id, sell_o, _sell_lvl, sell_remain, wallet, env);
-    if (buy_remain * p < env.min_quote_amount) return await* close(#Filled, buy_id, buy_o, _buy_lvl, buy_remain, wallet, env);
+    if (sell_remain * p < env.min_quote_amount) return await* close(#Filled, sell_id, sell_o, _sell_lvl, sell_remain, env);
+    if (buy_remain * p < env.min_quote_amount) return await* close(#Filled, buy_id, buy_o, _buy_lvl, buy_remain, env);
     if (sell_o.price > buy_o.price) return #Rest;
 
     var seller = getUser(sell_o.owner);
-    let sell_sub = Account.denull(sell_o.subaccount);
+    let sell_sub = Subaccount.get(sell_o.subaccount);
     var seller_sub = Book.getSubaccount(seller, sell_sub);
     var buyer = getUser(buy_o.owner);
-    let buy_sub = Account.denull(buy_o.subaccount);
+    let buy_sub = Subaccount.get(buy_o.subaccount);
     var buyer_sub = Book.getSubaccount(buyer, buy_sub);
     if (sell_o.owner == buy_o.owner and sell_sub == buy_sub) return #SameOwner;
 
@@ -733,13 +707,13 @@ shared (install) persistent actor class Canister(
     );
     let base_i = {
       account = sell_o;
-      asset = #ICRC1 { canister_id = env.base_token_id };
+      token = env.base_token_id;
       amount;
       action = #Unlock;
     };
     let quote_i = {
       account = buy_o;
-      asset = #ICRC1 { canister_id = env.quote_token_id };
+      token = env.quote_token_id;
       amount = amount_q;
       action = #Unlock;
     };
@@ -779,7 +753,7 @@ shared (install) persistent actor class Canister(
       buyer_sub := Book.getSubaccount(buyer, buy_sub);
       buyer_sub := Book.subaccUnlockQuote(buyer_sub, amount_q);
     };
-    try switch (await wallet.vault_execute(instructions)) {
+    try switch (await env.vault.vault_execute_aggregate(instructions)) {
       case (#Err err) {
         unlockMatch();
         saveMatch();
