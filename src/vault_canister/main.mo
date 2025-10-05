@@ -349,4 +349,32 @@ shared (install) persistent actor class Canister(
     executors := RBTree.delete(executors, Principal.compare, canister_id);
     #Ok;
   };
+
+  public shared query func vault_unlocked_balances_of(args : [{ account : ICRC1T.Account; token : Principal }]) : async [Nat] {
+    let max_query_batch = Value.getNat(meta, V.MAX_QUERY_BATCH, 0);
+    let res = Buffer.Buffer<Nat>(max_query_batch);
+    label batching for (a in args.vals()) {
+      let user = Vault.getUser(users, a.account.owner);
+      let sub = Subaccount.get(a.account.subaccount);
+      let subacc = Vault.getSubaccount(user, sub);
+      let bal = Vault.getBalance(subacc, a.token);
+      res.add(bal.unlocked);
+      if (max_query_batch > 0 and res.size() >= max_query_batch) break batching;
+    };
+    Buffer.toArray(res);
+  };
+
+  public shared query func vault_locked_balances_of(args : [{ account : ICRC1T.Account; token : Principal }]) : async [Nat] {
+    let max_query_batch = Value.getNat(meta, V.MAX_QUERY_BATCH, 0);
+    let res = Buffer.Buffer<Nat>(max_query_batch);
+    label batching for (a in args.vals()) {
+      let user = Vault.getUser(users, a.account.owner);
+      let sub = Subaccount.get(a.account.subaccount);
+      let subacc = Vault.getSubaccount(user, sub);
+      let bal = Vault.getBalance(subacc, a.token);
+      res.add(bal.locked);
+      if (max_query_batch > 0 and res.size() >= max_query_batch) break batching;
+    };
+    Buffer.toArray(res);
+  };
 };

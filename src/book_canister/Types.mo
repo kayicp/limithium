@@ -68,7 +68,7 @@ module {
     expires_at : Nat64;
     base : Amount; // in sell unit
     owner : Principal;
-    subaccount : ?Blob;
+    sub : Blob;
     created_at : Nat64;
     proof : Nat;
     trades : Nats;
@@ -116,6 +116,7 @@ module {
     #PriceTooLow : { index : Nat; minimum_price : Nat };
     #PriceUnavailable : { index : Nat; order_id : Nat };
     #BadFee : { expected_base : Nat; expected_quote : Nat };
+    #InsufficientBalance : { base_balance : Nat; quote_balance : Nat };
     #CreatedInFuture : { vault_time : Nat64 };
     #TooOld;
     #Duplicate : { duplicate_of : Nat };

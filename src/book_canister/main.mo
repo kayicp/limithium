@@ -54,8 +54,8 @@ shared (install) persistent actor class Canister(
 
   public shared ({ caller }) func book_open(arg : B.PlaceArg) : async B.PlaceRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
-    let user_acct = { owner = caller; subaccount = arg.subaccount };
-    if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
+    let user_acc = { owner = caller; subaccount = arg.subaccount };
+    if (not ICRC1L.validateAccount(user_acc)) return Error.text("Caller account is not valid");
 
     if (arg.orders.size() == 0) return Error.text("Orders must not be empty");
     let max_batch = Value.getNat(meta, B.MAX_ORDER_BATCH, 0);
@@ -108,7 +108,7 @@ shared (install) persistent actor class Canister(
         { o with token = env.base_token_id };
       };
       instructions_buff.add([{
-        instruction with account = user_acct;
+        instruction with account = user_acc;
         action = #Lock;
       }]);
     };
@@ -140,15 +140,9 @@ shared (install) persistent actor class Canister(
       case (?found) return #Err(#PriceUnavailable { lbuy with order_id = found });
       case _ ();
     };
-    // todo: skip since fee is zero anyway
-    // let fee_base = Value.getNat(meta, B.PLACE_FEE_BASE, 0) * RBTree.size(lsells);
-    // let fee_quote = Value.getNat(meta, B.PLACE_FEE_QUOTE, 0) * RBTree.size(lbuys);
-    // switch (arg.fee) {
-    //   case (?defined) if (defined.amount != null) if (defined.is_base) {
-    //     if (defined.amount == ?fee_base) () else return #Err(#BadFee { expected_fee = fee_base });
-    //   } else if (defined.amount == ?fee_quote) () else return #Err(#BadFee { expected_fee = fee_quote });
-    //   case _ ();
-    // };
+    // todo: skip fee check since it's zero anyway
+    let user_balances = await env.vault.vault_unlocked_balances_of([{ account = user_acc; token = env.base_token_id }, { account = user_acc; token = env.quote_token_id }]);
+    if (user_balances[0] < lbase or user_balances[1] < lquote) return #Err(#InsufficientBalance { base_balance = user_balances[0]; quote_balance = user_balances[1] });
     switch (checkMemo(arg.memo)) {
       case (#Err err) return #Err err;
       case _ ();
@@ -157,18 +151,18 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    // todo: check balance first ?
     let instruction_blocks = Buffer.toArray(instructions_buff);
-    // todo: save user subaccount first
     let execute_ids = switch (await env.vault.vault_execute(instruction_blocks)) {
       case (#Err err) return #Err(#ExecutionFailed { instruction_blocks; error = err });
       case (#Ok ok) ok;
     };
+    user := getUser(caller);
+    subacc := Book.getSubaccount(user, sub);
     base := Book.incAmount(base, Book.newAmount(lbase));
     quote := Book.incAmount(quote, Book.newAmount(lquote));
     var lorders = RBTree.empty<Nat, B.Order>(); // for blockify
     func newOrder(o : { index : Nat; expiry : Nat64 }) : B.Order {
-      let new_order = Book.newOrder(execute_ids[o.index], env.now, { arg.orders[o.index] with owner = caller; subaccount = arg.subaccount; expires_at = o.expiry });
+      let new_order = Book.newOrder(execute_ids[o.index], env.now, { arg.orders[o.index] with owner = caller; sub; expires_at = o.expiry });
       orders := RBTree.insert(orders, Nat.compare, order_id, new_order);
       lorders := RBTree.insert(lorders, Nat.compare, order_id, new_order);
 
@@ -203,8 +197,8 @@ shared (install) persistent actor class Canister(
 
   public shared ({ caller }) func book_close(arg : B.CancelArg) : async B.CancelRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
-    let user_acct = { owner = caller; subaccount = arg.subaccount };
-    if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
+    let user_acc = { owner = caller; subaccount = arg.subaccount };
+    if (not ICRC1L.validateAccount(user_acc)) return Error.text("Caller account is not valid");
 
     if (arg.orders.size() == 0) return Error.text("Orders must not be empty");
 
@@ -254,7 +248,7 @@ shared (install) persistent actor class Canister(
         let (reason, instructions) = if (o.is_buy) {
           let o_quote = unfilled * o.price;
           let instruction = {
-            account = user_acct;
+            account = user_acc;
             token = env.quote_token_id;
             amount = o_quote;
             action = #Unlock;
@@ -265,7 +259,7 @@ shared (install) persistent actor class Canister(
           };
         } else {
           let instruction = {
-            account = user_acct;
+            account = user_acc;
             token = env.base_token_id;
             amount = unfilled;
             action = #Unlock;
@@ -400,8 +394,8 @@ shared (install) persistent actor class Canister(
   // var runners = RBTree.empty<Principal, Nat64>();
   public shared ({ caller }) func book_run(arg : B.RunArg) : async B.RunRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
-    let user_acct = { owner = caller; subaccount = arg.subaccount };
-    if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
+    let user_acc = { owner = caller; subaccount = arg.subaccount };
+    if (not ICRC1L.validateAccount(user_acc)) return Error.text("Caller account is not valid");
     // switch max_book {
     //   case (?found) switch (RBTree.maxKey(orders)) {
     //     case (?max_oid) if (max_oid == found) return await* run() else if (max_oid > found) {
@@ -520,8 +514,7 @@ shared (install) persistent actor class Canister(
     var o = _o;
     var lvl = _lvl;
     var user = getUser(o.owner);
-    let subacc_key = Subaccount.get(o.subaccount);
-    var subacc = Book.getSubaccount(user, subacc_key);
+    var subacc = Book.getSubaccount(user, o.sub);
     func execClose(proof : ?Nat) {
       o := { o with closed = ?{ at = env.now; reason; proof } };
       lvl := { lvl with orders = RBTree.delete(lvl.orders, Nat.compare, oid) };
@@ -538,7 +531,7 @@ shared (install) persistent actor class Canister(
     func saveClose(expiry_too : Bool) {
       orders := RBTree.insert(orders, Nat.compare, oid, o);
       if (o.is_buy) buy_book := Book.saveLevel(buy_book, o.price, lvl) else sell_book := Book.saveLevel(sell_book, o.price, lvl);
-      user := Book.saveSubaccount(user, subacc_key, subacc);
+      user := Book.saveSubaccount(user, o.sub, subacc);
       user := saveUser(o.owner, user);
       if (expiry_too) {
         var expiries = Book.getExpiries(orders_by_expiry, o.expires_at);
@@ -573,7 +566,7 @@ shared (install) persistent actor class Canister(
 
     func unlockClose() {
       user := getUser(o.owner);
-      subacc := Book.getSubaccount(user, subacc_key);
+      subacc := Book.getSubaccount(user, o.sub);
       o := { o with base = Book.unlockAmount(o.base, remain) };
       if (o.is_buy) {
         lvl := Book.getLevel(buy_book, o.price);
@@ -588,7 +581,7 @@ shared (install) persistent actor class Canister(
       };
     };
     let instruction = {
-      account = o;
+      account = { o with subaccount = Subaccount.opt(o.sub) };
       token = cid;
       amount = amt;
       action = #Unlock;
@@ -669,12 +662,10 @@ shared (install) persistent actor class Canister(
     if (sell_o.price > buy_o.price) return #Rest;
 
     var seller = getUser(sell_o.owner);
-    let sell_sub = Subaccount.get(sell_o.subaccount);
-    var seller_sub = Book.getSubaccount(seller, sell_sub);
+    var seller_sub = Book.getSubaccount(seller, sell_o.sub);
     var buyer = getUser(buy_o.owner);
-    let buy_sub = Subaccount.get(buy_o.subaccount);
-    var buyer_sub = Book.getSubaccount(buyer, buy_sub);
-    if (sell_o.owner == buy_o.owner and sell_sub == buy_sub) return #SameOwner;
+    var buyer_sub = Book.getSubaccount(buyer, buy_o.sub);
+    if (sell_o.owner == buy_o.owner and sell_o.sub == buy_o.sub) return #SameOwner;
 
     let amount = Nat.min(sell_remain, buy_remain);
     let amount_q = amount * p;
@@ -696,9 +687,9 @@ shared (install) persistent actor class Canister(
       orders := RBTree.insert(orders, Nat.compare, buy_id, buy_o);
       sell_book := Book.saveLevel(sell_book, sell_p, sell_lvl);
       buy_book := Book.saveLevel(buy_book, buy_p, buy_lvl);
-      seller := Book.saveSubaccount(seller, sell_sub, seller_sub);
+      seller := Book.saveSubaccount(seller, sell_o.sub, seller_sub);
       seller := saveUser(sell_o.owner, seller);
-      buyer := Book.saveSubaccount(buyer, buy_sub, buyer_sub);
+      buyer := Book.saveSubaccount(buyer, buy_o.sub, buyer_sub);
       buyer := saveUser(buy_o.owner, buyer);
     };
     saveMatch();
@@ -710,14 +701,16 @@ shared (install) persistent actor class Canister(
       (env.taker_fee_numer * amount_q) / env.fee_denom,
       (env.maker_fee_numer * amount) / env.fee_denom,
     );
+    let sell_acc = { sell_o with subaccount = Subaccount.opt(sell_o.sub) };
+    let buy_acc = { buy_o with subaccount = Subaccount.opt(buy_o.sub) };
     let base_i = {
-      account = sell_o;
+      account = sell_acc;
       token = env.base_token_id;
       amount;
       action = #Unlock;
     };
     let quote_i = {
-      account = buy_o;
+      account = buy_acc;
       token = env.quote_token_id;
       amount = amount_q;
       action = #Unlock;
@@ -725,15 +718,15 @@ shared (install) persistent actor class Canister(
     let instructions_buff = Buffer.Buffer<V.Instruction>(6);
     instructions_buff.add(base_i);
     instructions_buff.add(quote_i);
-    instructions_buff.add({ base_i with action = #Transfer { to = buy_o } });
-    instructions_buff.add({ quote_i with action = #Transfer { to = sell_o } });
+    instructions_buff.add({ base_i with action = #Transfer { to = buy_acc } });
+    instructions_buff.add({ quote_i with action = #Transfer { to = sell_acc } });
     if (seller_fee > 0) instructions_buff.add({
-      quote_i with account = sell_o;
+      quote_i with account = sell_acc;
       amount = seller_fee;
       action = #Transfer { to = fee_collector };
     });
     if (buyer_fee > 0) instructions_buff.add({
-      base_i with account = buy_o;
+      base_i with account = buy_acc;
       amount = buyer_fee;
       action = #Transfer { to = fee_collector };
     });
@@ -752,10 +745,10 @@ shared (install) persistent actor class Canister(
       buy_lvl := Book.levelUnlock(buy_lvl, amount);
 
       seller := getUser(sell_o.owner);
-      seller_sub := Book.getSubaccount(seller, sell_sub);
+      seller_sub := Book.getSubaccount(seller, sell_o.sub);
       seller_sub := Book.subaccUnlockBase(seller_sub, amount);
       buyer := getUser(buy_o.owner);
-      buyer_sub := Book.getSubaccount(buyer, buy_sub);
+      buyer_sub := Book.getSubaccount(buyer, buy_o.sub);
       buyer_sub := Book.subaccUnlockQuote(buyer_sub, amount_q);
     };
     try switch (await env.vault.vault_execute(instruction_blocks)) {

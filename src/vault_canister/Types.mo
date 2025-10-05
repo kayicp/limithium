@@ -4,12 +4,15 @@ import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Token "../icrc1_canister/Types";
 
 module {
-  public let AVAILABLE = "wallet:available";
-  public let MIN_MEMO = "wallet:min_memo_size";
-  public let MAX_MEMO = "wallet:max_memo_size";
-  public let TX_WINDOW = "wallet:tx_window";
-  public let PERMITTED_DRIFT = "wallet:permitted_drift";
-  public let FEE_COLLECTOR = "wallet:fee_collector";
+  public let AVAILABLE = "vault:available";
+  public let MIN_MEMO = "vault:min_memo_size";
+  public let MAX_MEMO = "vault:max_memo_size";
+  public let TX_WINDOW = "vault:tx_window";
+  public let PERMITTED_DRIFT = "vault:permitted_drift";
+  public let FEE_COLLECTOR = "vault:fee_collector";
+  public let DEFAULT_TAKE = "vault:default_take_value";
+  public let MAX_TAKE = "vault:max_take_value";
+  public let MAX_QUERY_BATCH = "vault:max_query_batch_size";
 
   public type TokenArg = {
     subaccount : ?Blob;

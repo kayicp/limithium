@@ -63,11 +63,11 @@ module {
   public func fillAmount(a : B.Amount, b : Nat) : B.Amount = {
     a with filled = a.filled + b
   };
-  public func newOrder(proof : Nat, now : Nat64, { owner : Principal; subaccount : ?Blob; is_buy : Bool; price : Nat; amount : Nat; expires_at : Nat64 }) : B.Order = {
+  public func newOrder(proof : Nat, now : Nat64, { owner : Principal; sub : Blob; is_buy : Bool; price : Nat; amount : Nat; expires_at : Nat64 }) : B.Order = {
     created_at = now;
     proof;
     owner;
-    subaccount;
+    sub;
     is_buy;
     price;
     base = newAmount(amount);
