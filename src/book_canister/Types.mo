@@ -51,14 +51,15 @@ module {
     price : Nat;
     proof : Nat;
   };
+  public type CloseReason = {
+    #Filled;
+    #Expired;
+    #Canceled;
+  };
   public type OrderClosed = {
     at : Nat64;
     proof : ?Nat;
-    reason : {
-      #Filled;
-      #Expired;
-      #Canceled;
-    };
+    reason : CloseReason;
   };
   public type Order = {
     is_buy : Bool;
@@ -118,7 +119,10 @@ module {
     #CreatedInFuture : { vault_time : Nat64 };
     #TooOld;
     #Duplicate : { duplicate_of : Nat };
-    #ExecutionFailed : { instructions : [V.Instruction]; error : V.ExecuteErr };
+    #ExecutionFailed : {
+      instruction_blocks : [[V.Instruction]];
+      error : V.ExecuteErr;
+    };
   };
   public type PlaceRes = Result.Type<[(order_id : Nat)], PlaceErr>;
 
@@ -137,7 +141,10 @@ module {
     #Closed : { index : Nat; at : Nat64 };
     #Locked : { index : Nat };
     #BadFee : { expected_base : Nat; expected_quote : Nat };
-    #ExecutionFailed : { instructions : [V.Instruction]; error : V.ExecuteErr };
+    #ExecutionFailed : {
+      instruction_blocks : [[V.Instruction]];
+      error : V.ExecuteErr;
+    };
   };
   public type CancelRes = Result.Type<Nat, CancelErr>;
 
@@ -147,12 +154,12 @@ module {
     #TradeFailed : {
       buy : Nat;
       sell : Nat;
-      instructions : [V.Instruction];
+      instruction_blocks : [[V.Instruction]];
       error : V.ExecuteErr;
     };
     #CloseFailed : {
       order : Nat;
-      instructions : [V.Instruction];
+      instruction_blocks : [[V.Instruction]];
       error : V.ExecuteErr;
     };
     #CorruptOrderBook : { max_book : ?Nat; max_order : Nat };

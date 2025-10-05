@@ -73,15 +73,19 @@ module {
   };
   public type ExecuteErr = {
     #GenericError : Error.Type;
-    #ZeroAmount : { index : Nat };
-    #InvalidAccount : { index : Nat };
-    #UnlistedToken : { index : Nat };
-    #InsufficientBalance : { index : Nat; balance : Nat };
-    #InvalidRecipient : { index : Nat };
-    #InvalidTransfer : { index : Nat };
+    #EmptyInstructions : { block_index : Nat };
+    #ZeroAmount : { block_index : Nat; instruction_index : Nat };
+    #InvalidAccount : { block_index : Nat; instruction_index : Nat };
+    #UnlistedToken : { block_index : Nat; instruction_index : Nat };
+    #InsufficientBalance : {
+      block_index : Nat;
+      instruction_index : Nat;
+      balance : Nat;
+    };
+    #InvalidRecipient : { block_index : Nat; instruction_index : Nat };
+    #InvalidTransfer : { block_index : Nat; instruction_index : Nat };
   };
-  public type AggregateRes = Result.Type<Nat, ExecuteErr>;
-  public type GranularRes = Result.Type<[Nat], ExecuteErr>;
+  public type ExecuteRes = Result.Type<[Nat], ExecuteErr>;
   public type Instruction = {
     account : Token.Account;
     token : Principal;

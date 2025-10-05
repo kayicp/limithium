@@ -10,6 +10,7 @@ import Nat64 "mo:base/Nat64";
 import Blob "mo:base/Blob";
 import Nat "mo:base/Nat";
 import Iter "mo:base/Iter";
+import Buffer "mo:base/Buffer";
 import Time64 "../util/motoko/Time64";
 import Vault "Vault";
 import Result "../util/motoko/Result";
@@ -171,126 +172,74 @@ shared (install) persistent actor class Canister(
     #Ok 1;
   };
 
-  public shared ({ caller }) func vault_execute_aggregate(instructions : [V.Instruction]) : async V.AggregateRes {
+  public shared ({ caller }) func vault_execute(instruction_blocks : [[V.Instruction]]) : async V.ExecuteRes {
     if (not RBTree.has(executors, Principal.compare, caller)) return Error.text("Caller is not an executor");
-    if (instructions.size() == 0) return Error.text("Instructions must not be empty");
+    if (instruction_blocks.size() == 0) return Error.text("Instruction blocks must not be empty");
 
     var lusers : V.Users = RBTree.empty();
     func getLuser(p : Principal) : V.User = switch (RBTree.get(lusers, Principal.compare, p)) {
       case (?found) found;
       case _ Vault.getUser(users, p);
     };
-    for (index in Iter.range(0, instructions.size() - 1)) {
-      let i = instructions[index];
-      if (i.amount == 0) return #Err(#ZeroAmount { index });
-      if (not ICRC1L.validateAccount(i.account)) return #Err(#InvalidAccount { index });
-      if (not RBTree.has(tokens, Principal.compare, i.token)) return #Err(#UnlistedToken { index });
+    var lblock_id = block_id;
+    let res = Buffer.Buffer<Nat>(instruction_blocks.size());
+    for (block_index in Iter.range(0, instruction_blocks.size() - 1)) {
+      let instructions = instruction_blocks[block_index];
+      if (instructions.size() == 0) return #Err(#EmptyInstructions { block_index });
+      for (instruction_index in Iter.range(0, instructions.size() - 1)) {
+        let i = instructions[instruction_index];
+        if (i.amount == 0) return #Err(#ZeroAmount { block_index; instruction_index });
+        if (not ICRC1L.validateAccount(i.account)) return #Err(#InvalidAccount { block_index; instruction_index });
+        if (not RBTree.has(tokens, Principal.compare, i.token)) return #Err(#UnlistedToken { block_index; instruction_index });
 
-      var user = getLuser(i.account.owner);
-      var sub = Subaccount.get(i.account.subaccount);
-      var subacc = Vault.getSubaccount(user, sub);
-      var bal = Vault.getBalance(subacc, i.token);
-      switch (i.action) {
-        case (#Lock) {
-          if (bal.unlocked < i.amount) return #Err(#InsufficientBalance { index; balance = bal.unlocked });
-          bal := Vault.decUnlock(bal, i.amount);
-          bal := Vault.incLock(bal, i.amount);
-          subacc := Vault.saveBalance(subacc, i.token, bal);
-          user := Vault.saveSubaccount(user, sub, subacc);
-          lusers := Vault.saveUser(lusers, i.account.owner, user);
-        };
-        case (#Unlock) {
-          if (bal.locked < i.amount) return #Err(#InsufficientBalance { index; balance = bal.locked });
-          bal := Vault.decLock(bal, i.amount);
-          bal := Vault.incUnlock(bal, i.amount);
-          subacc := Vault.saveBalance(subacc, i.token, bal);
-          user := Vault.saveSubaccount(user, sub, subacc);
-          lusers := Vault.saveUser(lusers, i.account.owner, user);
-        };
-        case (#Transfer transfer) {
-          if (bal.unlocked < i.amount) return #Err(#InsufficientBalance { index; balance = bal.unlocked });
-          bal := Vault.decUnlock(bal, i.amount);
-          subacc := Vault.saveBalance(subacc, i.token, bal);
-          user := Vault.saveSubaccount(user, sub, subacc);
-          lusers := Vault.saveUser(lusers, i.account.owner, user);
+        var user = getLuser(i.account.owner);
+        var sub = Subaccount.get(i.account.subaccount);
+        var subacc = Vault.getSubaccount(user, sub);
+        var bal = Vault.getBalance(subacc, i.token);
+        switch (i.action) {
+          case (#Lock) {
+            if (bal.unlocked < i.amount) return #Err(#InsufficientBalance { block_index; instruction_index; balance = bal.unlocked });
+            bal := Vault.decUnlock(bal, i.amount);
+            bal := Vault.incLock(bal, i.amount);
+            subacc := Vault.saveBalance(subacc, i.token, bal);
+            user := Vault.saveSubaccount(user, sub, subacc);
+            lusers := Vault.saveUser(lusers, i.account.owner, user);
+          };
+          case (#Unlock) {
+            if (bal.locked < i.amount) return #Err(#InsufficientBalance { block_index; instruction_index; balance = bal.locked });
+            bal := Vault.decLock(bal, i.amount);
+            bal := Vault.incUnlock(bal, i.amount);
+            subacc := Vault.saveBalance(subacc, i.token, bal);
+            user := Vault.saveSubaccount(user, sub, subacc);
+            lusers := Vault.saveUser(lusers, i.account.owner, user);
+          };
+          case (#Transfer transfer) {
+            if (bal.unlocked < i.amount) return #Err(#InsufficientBalance { block_index; instruction_index; balance = bal.unlocked });
+            bal := Vault.decUnlock(bal, i.amount);
+            subacc := Vault.saveBalance(subacc, i.token, bal);
+            user := Vault.saveSubaccount(user, sub, subacc);
+            lusers := Vault.saveUser(lusers, i.account.owner, user);
 
-          if (not ICRC1L.validateAccount(transfer.to)) return #Err(#InvalidRecipient { index });
-          if (ICRC1L.equalAccount(i.account, transfer.to)) return #Err(#InvalidTransfer { index });
-          user := getLuser(transfer.to.owner);
-          sub := Subaccount.get(transfer.to.subaccount);
-          subacc := Vault.getSubaccount(user, sub);
-          bal := Vault.getBalance(subacc, i.token);
-          bal := Vault.incUnlock(bal, i.amount);
-          subacc := Vault.saveBalance(subacc, i.token, bal);
-          user := Vault.saveSubaccount(user, sub, subacc);
-          lusers := Vault.saveUser(lusers, transfer.to.owner, user);
-        };
-      };
-    };
-    for ((k, v) in RBTree.entries(lusers)) users := Vault.saveUser(users, k, v);
-    // todo: blockify
-    #Ok 1;
-  };
-
-  public shared ({ caller }) func vault_execute_granular(instructions : [V.Instruction]) : async V.GranularRes {
-    if (not RBTree.has(executors, Principal.compare, caller)) return Error.text("Caller is not an executor");
-    if (instructions.size() == 0) return Error.text("Instructions must not be empty");
-
-    var lusers : V.Users = RBTree.empty();
-    func getLuser(p : Principal) : V.User = switch (RBTree.get(lusers, Principal.compare, p)) {
-      case (?found) found;
-      case _ Vault.getUser(users, p);
-    };
-    for (index in Iter.range(0, instructions.size() - 1)) {
-      let i = instructions[index];
-      if (i.amount == 0) return #Err(#ZeroAmount { index });
-      if (not ICRC1L.validateAccount(i.account)) return #Err(#InvalidAccount { index });
-      if (not RBTree.has(tokens, Principal.compare, i.token)) return #Err(#UnlistedToken { index });
-
-      var user = getLuser(i.account.owner);
-      var sub = Subaccount.get(i.account.subaccount);
-      var subacc = Vault.getSubaccount(user, sub);
-      var bal = Vault.getBalance(subacc, i.token);
-      switch (i.action) {
-        case (#Lock) {
-          if (bal.unlocked < i.amount) return #Err(#InsufficientBalance { index; balance = bal.unlocked });
-          bal := Vault.decUnlock(bal, i.amount);
-          bal := Vault.incLock(bal, i.amount);
-          subacc := Vault.saveBalance(subacc, i.token, bal);
-          user := Vault.saveSubaccount(user, sub, subacc);
-          lusers := Vault.saveUser(lusers, i.account.owner, user);
-        };
-        case (#Unlock) {
-          if (bal.locked < i.amount) return #Err(#InsufficientBalance { index; balance = bal.locked });
-          bal := Vault.decLock(bal, i.amount);
-          bal := Vault.incUnlock(bal, i.amount);
-          subacc := Vault.saveBalance(subacc, i.token, bal);
-          user := Vault.saveSubaccount(user, sub, subacc);
-          lusers := Vault.saveUser(lusers, i.account.owner, user);
-        };
-        case (#Transfer transfer) {
-          if (bal.unlocked < i.amount) return #Err(#InsufficientBalance { index; balance = bal.unlocked });
-          bal := Vault.decUnlock(bal, i.amount);
-          subacc := Vault.saveBalance(subacc, i.token, bal);
-          user := Vault.saveSubaccount(user, sub, subacc);
-          lusers := Vault.saveUser(lusers, i.account.owner, user);
-
-          if (not ICRC1L.validateAccount(transfer.to)) return #Err(#InvalidRecipient { index });
-          if (ICRC1L.equalAccount(i.account, transfer.to)) return #Err(#InvalidTransfer { index });
-          user := getLuser(transfer.to.owner);
-          sub := Subaccount.get(transfer.to.subaccount);
-          subacc := Vault.getSubaccount(user, sub);
-          bal := Vault.getBalance(subacc, i.token);
-          bal := Vault.incUnlock(bal, i.amount);
-          subacc := Vault.saveBalance(subacc, i.token, bal);
-          user := Vault.saveSubaccount(user, sub, subacc);
-          lusers := Vault.saveUser(lusers, transfer.to.owner, user);
+            if (not ICRC1L.validateAccount(transfer.to)) return #Err(#InvalidRecipient { block_index; instruction_index });
+            if (ICRC1L.equalAccount(i.account, transfer.to)) return #Err(#InvalidTransfer { block_index; instruction_index });
+            user := getLuser(transfer.to.owner);
+            sub := Subaccount.get(transfer.to.subaccount);
+            subacc := Vault.getSubaccount(user, sub);
+            bal := Vault.getBalance(subacc, i.token);
+            bal := Vault.incUnlock(bal, i.amount);
+            subacc := Vault.saveBalance(subacc, i.token, bal);
+            user := Vault.saveSubaccount(user, sub, subacc);
+            lusers := Vault.saveUser(lusers, transfer.to.owner, user);
+          };
         };
       };
+      // todo: blockify
+      res.add(lblock_id);
+      lblock_id += 1;
     };
     for ((k, v) in RBTree.entries(lusers)) users := Vault.saveUser(users, k, v);
-    // todo: blockify each instruction
-    #Ok([1]);
+    block_id := lblock_id;
+    #Ok(Buffer.toArray(res));
   };
 
   func checkMemo(m : ?Blob) : Result.Type<(), Error.Generic> = switch m {
