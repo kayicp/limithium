@@ -86,6 +86,10 @@ module {
     base = incAmount(p.base, o.base);
     orders = RBTree.insert(p.orders, Nat.compare, oid, ());
   });
+  public func levelDelOrder(p : B.Price, oid : Nat, o : B.Order) : B.Price = ({
+    base = decAmount(p.base, o.base);
+    orders = RBTree.delete(p.orders, Nat.compare, oid);
+  });
   public func levelLock(p : B.Price, l : Nat) : B.Price = ({
     p with base = lockAmount(p.base, l)
   });
@@ -110,7 +114,12 @@ module {
     buys = RBTree.insert(s.buys, Nat.compare, o.price, oid);
     quote = incAmount(s.quote, mulAmount(o.base, o.price));
   });
-
+  public func subaccDecQuote(s : B.Subaccount, q : B.Amount) : B.Subaccount = {
+    s with quote = decAmount(s.quote, q);
+  };
+  public func subaccDecBase(s : B.Subaccount, b : B.Amount) : B.Subaccount = {
+    s with base = decAmount(s.base, b);
+  };
   public func subaccLockQuote(s : B.Subaccount, n : Nat) : B.Subaccount = {
     s with quote = lockAmount(s.quote, n)
   };

@@ -142,6 +142,7 @@ module {
     #Closed : { index : Nat; at : Nat64 };
     #Locked : { index : Nat };
     #BadFee : { expected_base : Nat; expected_quote : Nat };
+    #InsufficientBalance : { base_balance : Nat; quote_balance : Nat };
     #ExecutionFailed : {
       instruction_blocks : [[V.Instruction]];
       error : V.ExecuteErr;
