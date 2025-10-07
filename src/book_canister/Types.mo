@@ -41,7 +41,11 @@ module {
   // todo: add `block_id` to order and trade object
   public type Nats = RBTree.Type<Nat, ()>;
   public type Expiries = RBTree.Type<Nat64, Nats>;
-  public type Amount = { initial : Nat; locked : Nat; filled : Nat };
+  public type Amount = {
+    initial : Nat;
+    locked : Nat;
+    filled : Nat;
+  };
   public type Price = { base : Amount; orders : Nats };
   public type Book = RBTree.Type<(price : Nat), Price>;
   public type Trade = {
@@ -49,28 +53,32 @@ module {
     buy : { id : Nat; quote : Nat; fee_base : Nat };
     at : Nat64;
     price : Nat;
-    proof : Nat;
+    execute : Nat;
   };
   public type CloseReason = {
     #Filled;
     #Expired;
     #Canceled;
   };
-  public type OrderClosed = {
+  public type Closed = {
+    caller : Principal;
+    sub : Blob;
     at : Nat64;
-    proof : ?Nat;
+    block : ?Nat;
+    execute : ?Nat;
     reason : CloseReason;
   };
   public type Order = {
     is_buy : Bool;
     price : Nat;
-    closed : ?OrderClosed;
+    closed : ?Closed;
     expires_at : Nat64;
     base : Amount; // in sell unit
     owner : Principal;
     sub : Blob;
     created_at : Nat64;
-    proof : Nat;
+    block : Nat;
+    execute : Nat;
     trades : Nats;
   };
   public type Subaccount = {
@@ -164,7 +172,6 @@ module {
       instruction_blocks : [[V.Instruction]];
       error : V.ExecuteErr;
     };
-    #CorruptOrderBook : { max_book : ?Nat; max_order : Nat };
     #MatchFailed;
   };
   public type RunRes = Result.Type<Nat, RunErr>;

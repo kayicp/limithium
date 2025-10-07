@@ -63,9 +63,10 @@ module {
   public func fillAmount(a : B.Amount, b : Nat) : B.Amount = {
     a with filled = a.filled + b
   };
-  public func newOrder(proof : Nat, now : Nat64, { owner : Principal; sub : Blob; is_buy : Bool; price : Nat; amount : Nat; expires_at : Nat64 }) : B.Order = {
+  public func newOrder(execute : Nat, block : Nat, now : Nat64, { owner : Principal; sub : Blob; is_buy : Bool; price : Nat; amount : Nat; expires_at : Nat64 }) : B.Order = {
     created_at = now;
-    proof;
+    execute;
+    block;
     owner;
     sub;
     is_buy;
@@ -74,6 +75,14 @@ module {
     expires_at;
     trades = RBTree.empty();
     closed = null;
+  };
+  public func newClose(caller : Principal, sub : Blob, at : Nat64, block : ?Nat, reason : B.CloseReason, execute : ?Nat) : B.Closed = {
+    caller;
+    sub;
+    at;
+    block;
+    reason;
+    execute;
   };
   public func getLevel(book : B.Book, price : Nat) : B.Price = switch (RBTree.get(book, Nat.compare, price)) {
     case (?found) found;
@@ -103,17 +112,31 @@ module {
     RBTree.insert(b, Nat.compare, price, p);
   } else RBTree.delete(b, Nat.compare, price);
 
-  public func subaccNewSell(s : B.Subaccount, oid : Nat, o : B.Order) : B.Subaccount = ({
-    s with orders = RBTree.insert(s.orders, Nat.compare, oid, ());
-    sells = RBTree.insert(s.sells, Nat.compare, o.price, oid);
-    base = incAmount(s.base, o.base);
-  });
+  public func subaccNewOrder(s : B.Subaccount, oid : Nat) : B.Subaccount = {
+    s with orders = RBTree.insert(s.orders, Nat.compare, oid, ())
+  };
+  public func subaccDelOrder(s : B.Subaccount, oid : Nat) : B.Subaccount = {
+    s with orders = RBTree.delete(s.orders, Nat.compare, oid);
+  };
 
-  public func subaccNewBuy(s : B.Subaccount, oid : Nat, o : B.Order) : B.Subaccount = ({
-    s with orders = RBTree.insert(s.orders, Nat.compare, oid, ());
-    buys = RBTree.insert(s.buys, Nat.compare, o.price, oid);
-    quote = incAmount(s.quote, mulAmount(o.base, o.price));
+  public func subaccNewSell(s : B.Subaccount, oid : Nat, o : B.Order) : B.Subaccount = ({
+    s with sells = RBTree.insert(s.sells, Nat.compare, o.price, oid);
   });
+  public func subaccNewBuy(s : B.Subaccount, oid : Nat, o : B.Order) : B.Subaccount = ({
+    s with buys = RBTree.insert(s.buys, Nat.compare, o.price, oid);
+  });
+  public func subaccDelSell(s : B.Subaccount, o : B.Order) : B.Subaccount = ({
+    s with sells = RBTree.delete(s.sells, Nat.compare, o.price);
+  });
+  public func subaccDelBuy(s : B.Subaccount, o : B.Order) : B.Subaccount = ({
+    s with buys = RBTree.delete(s.buys, Nat.compare, o.price);
+  });
+  public func subaccIncQuote(s : B.Subaccount, q : B.Amount) : B.Subaccount = {
+    s with quote = incAmount(s.quote, q);
+  };
+  public func subaccIncBase(s : B.Subaccount, b : B.Amount) : B.Subaccount = {
+    s with base = incAmount(s.base, b);
+  };
   public func subaccDecQuote(s : B.Subaccount, q : B.Amount) : B.Subaccount = {
     s with quote = decAmount(s.quote, q);
   };
