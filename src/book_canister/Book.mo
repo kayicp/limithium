@@ -91,14 +91,18 @@ module {
       orders = RBTree.empty();
     });
   };
-  public func levelNewOrder(p : B.Price, oid : Nat, o : B.Order) : B.Price = ({
-    base = incAmount(p.base, o.base);
-    orders = RBTree.insert(p.orders, Nat.compare, oid, ());
-  });
-  public func levelDelOrder(p : B.Price, oid : Nat, o : B.Order) : B.Price = ({
-    base = decAmount(p.base, o.base);
-    orders = RBTree.delete(p.orders, Nat.compare, oid);
-  });
+  public func levelNewOrder(p : B.Price, oid : Nat) : B.Price = {
+    p with orders = RBTree.insert(p.orders, Nat.compare, oid, ());
+  };
+  public func levelIncAmount(p : B.Price, o : B.Amount) : B.Price = {
+    p with base = incAmount(p.base, o);
+  };
+  public func levelDelOrder(p : B.Price, oid : Nat) : B.Price = {
+    p with orders = RBTree.delete(p.orders, Nat.compare, oid);
+  };
+  public func levelDecAmount(p : B.Price, o : B.Amount) : B.Price = {
+    p with base = decAmount(p.base, o);
+  };
   public func levelLock(p : B.Price, l : Nat) : B.Price = ({
     p with base = lockAmount(p.base, l)
   });

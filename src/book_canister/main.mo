@@ -54,6 +54,8 @@ shared (install) persistent actor class Canister(
 
   public shared ({ caller }) func book_open(arg : B.PlaceArg) : async B.PlaceRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
+    if (prev_build != RBTree.maxKey(orders)) return Error.text("Orderbook needs rebuilding. Please call `book_run`");
+
     let user_acc = { owner = caller; subaccount = arg.subaccount };
     if (not ICRC1L.validateAccount(user_acc)) return Error.text("Caller account is not valid");
 
@@ -173,7 +175,8 @@ shared (install) persistent actor class Canister(
     for ((o_price, o) in RBTree.entries(lsells)) {
       let new_order = newOrder(o);
       var price = Book.getLevel(sell_book, o_price);
-      price := Book.levelNewOrder(price, order_id, new_order);
+      price := Book.levelNewOrder(price, order_id);
+      price := Book.levelIncAmount(price, new_order.base);
       sell_book := Book.saveLevel(sell_book, o_price, price);
       subacc := Book.subaccNewSell(subacc, order_id, new_order);
       subacc := Book.subaccIncBase(subacc, new_order.base);
@@ -182,7 +185,8 @@ shared (install) persistent actor class Canister(
     for ((o_price, o) in RBTree.entriesReverse(lbuys)) {
       let new_order = newOrder(o);
       var price = Book.getLevel(buy_book, o_price);
-      price := Book.levelNewOrder(price, order_id, new_order);
+      price := Book.levelNewOrder(price, order_id);
+      price := Book.levelIncAmount(price, new_order.base);
       buy_book := Book.saveLevel(buy_book, o_price, price);
       subacc := Book.subaccNewBuy(subacc, order_id, new_order);
       subacc := Book.subaccIncQuote(subacc, Book.mulAmount(new_order.base, new_order.price));
@@ -198,6 +202,8 @@ shared (install) persistent actor class Canister(
 
   public shared ({ caller }) func book_close(arg : B.CancelArg) : async B.CancelRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
+    if (prev_build != RBTree.maxKey(orders)) return Error.text("Orderbook needs rebuilding. Please call `book_run`");
+
     let user_acc = { owner = caller; subaccount = arg.subaccount };
     if (not ICRC1L.validateAccount(user_acc)) return Error.text("Caller account is not valid");
 
@@ -335,7 +341,8 @@ shared (install) persistent actor class Canister(
         order := Book.unlockOrder(order, order.base.locked);
         let closed = switch execute_ok {
           case (?exec_ids) {
-            price := Book.levelDelOrder(price, oid, order);
+            price := Book.levelDelOrder(price, oid);
+            price := Book.levelDecAmount(price, order.base);
             if (order.is_buy) {
               buy_book := Book.saveLevel(buy_book, order.price, price);
               let o_quote = Book.mulAmount(order.base, order.price);
@@ -449,11 +456,7 @@ shared (install) persistent actor class Canister(
       case (?built_until) switch (RBTree.maxKey(orders)) {
         case (?max_oid) switch (Nat.compare(built_until, max_oid)) {
           case (#less) build();
-          case (#equal) await* run();
-          case (#greater) {
-            prev_build := null; // rebuild
-            build();
-          };
+          case _ await* run();
         };
         case _ Error.text("Empty orders");
       };
@@ -477,28 +480,52 @@ shared (install) persistent actor class Canister(
     };
   };
 
+  // todo: if build mode is on, pause open/close/run order
   func build() : B.RunRes {
-    let (oid, o) = switch prev_build {
-      case (?prev) switch (RBTree.right(orders, Nat.compare, prev + 1)) {
-        case (?next) next;
-        case _ return Error.text("Built: reached the end");
+    let res = Buffer.Buffer<Nat>(100);
+    label building for (i in Iter.range(0, 100 - 1)) {
+      let get_order = switch prev_build {
+        case (?prev) RBTree.right(orders, Nat.compare, prev + 1);
+        case _ RBTree.min(orders);
       };
-      case _ switch (RBTree.min(orders)) {
-        case (?min) min;
-        case _ return Error.text("No build required: empty orderbook");
+      let (oid, o) = switch get_order {
+        case (?found) found;
+        case _ if (RBTree.size(orders) > 0) break building else return Error.text("No build required: empty orderbook");
       };
-    };
-    var user = getUser(o.owner);
-    var subacc = Book.getSubaccount(user, o.sub);
-    subacc := Book.subaccNewOrder(subacc, oid);
-    subacc := if (o.is_buy) {
-      Book.subaccNewBuy(subacc, oid, o); // cant actually use this for closed order
-    } else {
-      Book.subaccNewSell(subacc, oid, o);
-    };
+      switch (o.closed) {
+        case (?cl) if (cl.block == null) return Error.text("Try again later: Order " # debug_show oid # " is still closing. Built: " # debug_show (Buffer.toArray(res)));
+        case _ ();
+      };
+      var user = getUser(o.owner);
+      var subacc = Book.getSubaccount(user, o.sub);
+      subacc := Book.subaccNewOrder(subacc, oid);
+      if (o.closed == null) {
+        if (o.is_buy) {
+          var pr = Book.getLevel(buy_book, o.price);
+          pr := Book.levelNewOrder(pr, oid);
+          pr := Book.levelIncAmount(pr, o.base);
+          buy_book := Book.saveLevel(buy_book, o.price, pr);
+          subacc := Book.subaccNewBuy(subacc, oid, o);
+          let o_quote = Book.mulAmount(o.base, o.price);
+          subacc := Book.subaccIncQuote(subacc, o_quote);
+          quote := Book.incAmount(quote, o_quote);
+        } else {
+          var pr = Book.getLevel(sell_book, o.price);
+          pr := Book.levelNewOrder(pr, oid);
+          pr := Book.levelIncAmount(pr, o.base);
+          sell_book := Book.saveLevel(sell_book, o.price, pr);
+          subacc := Book.subaccNewSell(subacc, oid, o);
+          subacc := Book.subaccIncBase(subacc, o.base);
+          base := Book.incAmount(base, o.base);
+        };
+      };
+      user := Book.saveSubaccount(user, o.sub, subacc);
+      user := saveUser(o.owner, user);
 
-    prev_build := ?oid;
-    Error.text("Peepee");
+      prev_build := ?oid;
+      res.add(oid);
+    };
+    Error.text("Built: " # debug_show (Buffer.toArray(res)));
   };
 
   func run() : async* B.RunRes {
@@ -507,36 +534,177 @@ shared (install) persistent actor class Canister(
       case (#Ok ok) ok;
     };
     meta := env.meta;
-    var sell_p = switch (RBTree.min(sell_book)) {
-      case (?(key, lvl)) ({ key; lvl });
-      case _ return Error.text("Sell book is empty");
-    };
-    var buy_p = switch (RBTree.max(buy_book)) {
-      case (?(key, lvl)) ({ key; lvl });
-      case _ return Error.text("Buy book is empty");
-    };
-    let fee_collector = getFeeCollector();
-    label matching for (i in Iter.range(0, 100 - 1)) {
-      let move_sell = switch (await* match0(fee_collector, env, (sell_p.key, sell_p.lvl), (buy_p.key, buy_p.lvl))) {
-        case (#Rest) break matching;
-        case (#Ok ok) return #Ok ok;
-        case (#Err err) return #Err err;
-        case (#Next next_buy) next_buy;
+    var start_sell_lvl = true;
+    var start_buy_lvl = true;
+    var next_sell_lvl = false;
+    var next_buy_lvl = false;
+    var sell_p = 0;
+    var buy_p = 0;
+    var sell_lvl = Book.getLevel(RBTree.empty(), 0);
+    var buy_lvl = Book.getLevel(RBTree.empty(), 0);
+    label pricing while true {
+      if (start_sell_lvl) switch (RBTree.min(sell_book)) {
+        case (?(p, lvl)) {
+          sell_p := p;
+          sell_lvl := lvl;
+          start_sell_lvl := false;
+        };
+        case _ return await* trim();
+      } else if (next_sell_lvl) switch (RBTree.right(sell_book, Nat.compare, sell_p + 1)) {
+        case (?(p, lvl)) {
+          sell_p := p;
+          sell_lvl := lvl;
+          next_sell_lvl := false;
+        };
+        case _ return await* trim();
+      } else ();
+
+      if (start_buy_lvl) switch (RBTree.max(buy_book)) {
+        case (?(p, lvl)) {
+          buy_p := p;
+          buy_lvl := lvl;
+          start_buy_lvl := false;
+        };
+        case _ return await* trim();
+      } else if (next_buy_lvl) {
+        if (buy_p > 0) switch (RBTree.left(buy_book, Nat.compare, buy_p - 1)) {
+          case (?(p, lvl)) {
+            buy_p := p;
+            buy_lvl := lvl;
+            next_buy_lvl := false;
+          };
+          case _ return await* trim();
+        } else return await* trim();
+      } else ();
+
+      var start_sell_o = true;
+      var start_buy_o = true;
+      var next_sell_o = true;
+      var next_buy_o = true;
+      var sell_id = 0;
+      var buy_id = 0;
+      var sell_o : B.Order = {
+        created_at = env.now;
+        execute = 0;
+        block = 0;
+        owner = Principal.fromActor(Self);
+        sub = Subaccount.get(null);
+        is_buy = false;
+        price = 0;
+        base = Book.newAmount(0);
+        expires_at = 0;
+        trades = RBTree.empty();
+        closed = null;
       };
-      if (move_sell) sell_p := switch (RBTree.right(sell_book, Nat.compare, sell_p.key + 1)) {
-        case (?(key, lvl)) ({ key; lvl });
-        case _ break matching;
-      } else if (buy_p.key > 0) buy_p := switch (RBTree.left(buy_book, Nat.compare, buy_p.key - 1)) {
-        case (?(key, lvl)) ({ key; lvl });
-        case _ break matching;
-      } else break matching;
-    };
-    label trimming for (i in Iter.range(0, 100 - 1)) {
+      var buy_o = { sell_o with is_buy = true };
+      label timing while true {
+        if (start_sell_o) switch (RBTree.minKey(sell_lvl.orders)) {
+          case (?id) {
+            sell_id := id;
+            sell_o := switch (RBTree.get(orders, Nat.compare, sell_id)) {
+              case (?found) found;
+              case _ {
+                sell_lvl := Book.levelDelOrder(sell_lvl, sell_id);
+                continue timing;
+              };
+            };
+            start_sell_o := false;
+          };
+          case _ {
+            next_sell_lvl := true;
+            sell_book := RBTree.delete(sell_book, Nat.compare, sell_p);
+            continue pricing;
+          };
+        } else if (next_sell_o) switch (RBTree.right(sell_lvl.orders, Nat.compare, sell_id + 1)) {
+          case (?(id, _)) {
+            sell_id := id;
+            sell_o := switch (RBTree.get(orders, Nat.compare, sell_id)) {
+              case (?found) found;
+              case _ {
+                sell_lvl := Book.levelDelOrder(sell_lvl, sell_id);
+                continue timing;
+              };
+            };
+            next_sell_o := false;
+          };
+          case _ {
+            next_sell_lvl := true;
+            continue pricing;
+          };
+        } else ();
 
+        // if (start_sell_o) switch (RBTree.minKey(sell_lvl.orders)) {
+        //   case (?id) {
+        //     sell_id := id;
+        //     sell_o := switch (RBTree.get(orders, Nat.compare, sell_id)) {
+        //       case (?found) found;
+        //       case _ {
+        //         sell_lvl := Book.levelDelOrder(sell_lvl, sell_id);
+        //         continue timing;
+        //       };
+        //     };
+        //     start_sell_o := false;
+        //   };
+        //   case _ {
+        //     next_sell_lvl := true;
+        //     sell_book := RBTree.delete(sell_book, Nat.compare, sell_p);
+        //     continue pricing;
+        //   };
+        // } else if (next_sell_o) switch (RBTree.right(sell_lvl.orders, Nat.compare, sell_id + 1)) {
+        //   case (?(id, _)) {
+        //     sell_id := id;
+        //     sell_o := switch (RBTree.get(orders, Nat.compare, sell_id)) {
+        //       case (?found) found;
+        //       case _ {
+        //         sell_lvl := Book.levelDelOrder(sell_lvl, sell_id);
+        //         continue timing;
+        //       };
+        //     };
+        //     next_sell_o := false;
+        //   };
+        //   case _ {
+        //     next_sell_lvl := true;
+        //     continue pricing;
+        //   };
+        // } else ();
+        // if (not next_sell_o and not next_buy_o)
+      };
+      if (not next_sell_lvl and not next_buy_lvl) return await* trim(); // after everything, must be one next
     };
-    label archiving for (i in Iter.range(0, 100 - 1)) {
 
-    };
+    // var sell_p = switch (RBTree.min(sell_book)) {
+    //   case (?(rice, lvl)) ({ rice; lvl });
+    //   case _ return Error.text("Sell book is empty");
+    // };
+    // var buy_p = switch (RBTree.max(buy_book)) {
+    //   case (?(rice, lvl)) ({ rice; lvl });
+    //   case _ return Error.text("Buy book is empty");
+    // };
+
+    let fee_collector = getFeeCollector();
+    // label matching for (i in Iter.range(0, 100 - 1)) {
+    //   let move_buy = switch (await* match0(fee_collector, env, (sell_p.rice, sell_p.lvl), (buy_p.rice, buy_p.lvl))) {
+    //     case (#Rest) break matching;
+    //     case (#Ok ok) return #Ok ok;
+    //     case (#Err err) return #Err err;
+    //     case (#Next next_buy_lvl) next_buy_lvl;
+    //   };
+    //   if (move_buy) {
+    //     if (buy_p.key > 0) buy_p := switch (RBTree.left(buy_book, Nat.compare, buy_p.key - 1)) {
+    //       case (?(key, lvl)) ({ key; lvl });
+    //       case _ break matching;
+    //     } else break matching;
+    //   } else sell_p := switch (RBTree.right(sell_book, Nat.compare, sell_p.key + 1)) {
+    //     case (?(key, lvl)) ({ key; lvl });
+    //     case _ break matching;
+    //   };
+    // };
+    // label trimming for (i in Iter.range(0, 100 - 1)) {
+
+    // };
+    // label archiving for (i in Iter.range(0, 100 - 1)) {
+
+    // };
     Error.text("No job available");
   };
 
@@ -587,6 +755,10 @@ shared (install) persistent actor class Canister(
       // };
     };
     #Rest;
+  };
+
+  func trim() : async* B.RunRes {
+    Error.text("Summer");
   };
 
   // func close(reason : { #Expired; #Filled }, oid : Nat, _o : B.Order, _lvl : B.Price, remain : Nat, env : B.Environment) : async* B.RunRes {
@@ -863,9 +1035,4 @@ shared (install) persistent actor class Canister(
   //     #Err(Error.convert(err));
   //   };
   // };
-
-  func trim() {
-
-  };
-
 };
