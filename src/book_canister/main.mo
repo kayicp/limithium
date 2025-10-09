@@ -200,6 +200,7 @@ shared (install) persistent actor class Canister(
     #Ok([]);
   };
 
+  // todo: only blockify refundable orders, close the rest in background (if it's in the arg, dont return error but relax)
   public shared ({ caller }) func book_close(arg : B.CancelArg) : async B.CancelRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
     if (prev_build != RBTree.maxKey(orders)) return Error.text("Orderbook needs rebuilding. Please call `book_run`");
@@ -528,6 +529,10 @@ shared (install) persistent actor class Canister(
     Error.text("Built: " # debug_show (Buffer.toArray(res)));
   };
 
+  func rebuild(msg : Text) : Error.Result {
+    prev_build := null;
+    Error.text("Rebuilding: " # msg);
+  };
   func run() : async* B.RunRes {
     let env = switch (await* Book.getEnvironment(meta)) {
       case (#Err err) return #Err err;
@@ -611,7 +616,7 @@ shared (install) persistent actor class Canister(
             start_sell_o := false;
           };
           case _ {
-            next_sell_lvl := true;
+            next_sell_lvl := true; // price level is empty
             sell_book := RBTree.delete(sell_book, Nat.compare, sell_p);
             continue pricing;
           };
@@ -628,45 +633,132 @@ shared (install) persistent actor class Canister(
             next_sell_o := false;
           };
           case _ {
-            next_sell_lvl := true;
+            next_sell_lvl := true; // price level is busy
             continue pricing;
           };
-        } else ();
+        };
 
-        // if (start_sell_o) switch (RBTree.minKey(sell_lvl.orders)) {
-        //   case (?id) {
-        //     sell_id := id;
-        //     sell_o := switch (RBTree.get(orders, Nat.compare, sell_id)) {
-        //       case (?found) found;
-        //       case _ {
-        //         sell_lvl := Book.levelDelOrder(sell_lvl, sell_id);
-        //         continue timing;
-        //       };
-        //     };
-        //     start_sell_o := false;
-        //   };
-        //   case _ {
-        //     next_sell_lvl := true;
-        //     sell_book := RBTree.delete(sell_book, Nat.compare, sell_p);
-        //     continue pricing;
-        //   };
-        // } else if (next_sell_o) switch (RBTree.right(sell_lvl.orders, Nat.compare, sell_id + 1)) {
-        //   case (?(id, _)) {
-        //     sell_id := id;
-        //     sell_o := switch (RBTree.get(orders, Nat.compare, sell_id)) {
-        //       case (?found) found;
-        //       case _ {
-        //         sell_lvl := Book.levelDelOrder(sell_lvl, sell_id);
-        //         continue timing;
-        //       };
-        //     };
-        //     next_sell_o := false;
-        //   };
-        //   case _ {
-        //     next_sell_lvl := true;
-        //     continue pricing;
-        //   };
-        // } else ();
+        if (start_buy_o) switch (RBTree.minKey(buy_lvl.orders)) {
+          case (?id) {
+            buy_id := id;
+            buy_o := switch (RBTree.get(orders, Nat.compare, buy_id)) {
+              case (?found) found;
+              case _ {
+                buy_lvl := Book.levelDelOrder(buy_lvl, buy_id);
+                continue timing;
+              };
+            };
+            start_buy_o := false;
+          };
+          case _ {
+            next_buy_lvl := true;
+            buy_book := RBTree.delete(buy_book, Nat.compare, buy_p);
+            continue pricing;
+          };
+        } else if (next_buy_o) switch (RBTree.right(buy_lvl.orders, Nat.compare, buy_id + 1)) {
+          case (?(id, _)) {
+            buy_id := id;
+            buy_o := switch (RBTree.get(orders, Nat.compare, buy_id)) {
+              case (?found) found;
+              case _ {
+                buy_lvl := Book.levelDelOrder(buy_lvl, buy_id);
+                continue timing;
+              };
+            };
+            next_buy_o := false;
+          };
+          case _ {
+            next_buy_lvl := true;
+            continue pricing;
+          };
+        };
+
+        if (sell_id == buy_id) return rebuild("sell id (" # debug_show sell_id # ") is equal to buy id");
+        if (sell_o.is_buy) return rebuild("buy order (" # debug_show sell_id # ") is on sell book");
+        if (sell_o.price != sell_p) return rebuild("sell order (" # debug_show sell_id # ")'s price (" # debug_show sell_o.price # ") on the wrong level (" # debug_show sell_p # ")");
+
+        if (not buy_o.is_buy) return rebuild("sell order (" # debug_show buy_id # ") is on buy book");
+        if (buy_o.price != buy_p) return rebuild("buy order (" # debug_show buy_id # ")'s price (" # debug_show buy_o.price # ") on the wrong level (" # debug_show buy_p # ")");
+
+        switch (sell_o.closed) {
+          case (?found) {
+            if (found.block != null) {
+              // todo: delete from sell book, users, base
+            };
+            next_sell_o := true;
+            continue timing;
+          };
+          case _ ();
+        };
+        switch (buy_o.closed) {
+          case (?found) {
+            if (found.block != null) {
+              // todo: delete from buy book, users, quote
+            };
+            next_buy_o := true;
+            continue timing; // todo: should return?
+          };
+          case _ ();
+        };
+        if (sell_o.base.locked > 0) {
+          next_sell_o := true;
+          continue timing;
+        };
+        if (buy_o.base.locked > 0) {
+          next_buy_o := true;
+          continue timing;
+        };
+        if (sell_o.base.filled >= sell_o.base.initial) {
+          // todo: close filled sell
+        };
+        if (buy_o.base.filled >= buy_o.base.initial) {
+          // todo: close filled buy
+        };
+        if (sell_o.expires_at < env.now) {
+          // todo: close expired sell
+        };
+        if (buy_o.expires_at < env.now) {
+          // todo: close expired buy
+        };
+        let sell_unfilled = sell_o.base.initial - sell_o.base.filled;
+        let sell_unfilled_q = sell_unfilled * sell_o.price;
+        let buy_unfilled = buy_o.base.initial - buy_o.base.filled;
+        let buy_unfilled_q = buy_unfilled * buy_o.price;
+        if (sell_unfilled < env.min_base_amount or sell_unfilled_q < env.min_quote_amount) {
+          // todo: close+refund filled sell
+        };
+        if (buy_unfilled < env.min_base_amount or buy_unfilled_q < env.min_quote_amount) {
+          // todo: close+refund filled buy
+        };
+        let sell_maker = sell_id < buy_id;
+        if (sell_o.owner == buy_o.owner /* and sell_o.sub == buy_o.sub  // do not check subaccount since we getUser() for both buyer & seller*/) {
+          if (sell_maker) next_sell_o := true else next_buy_o := true;
+          continue timing;
+        };
+        if (sell_o.price > buy_o.price) return await* trim();
+        let maker_p = if (sell_maker) sell_o.price else buy_o.price;
+        let (min_base, min_quote, min_side) = if (sell_unfilled < buy_unfilled) (sell_unfilled, sell_unfilled * maker_p, false) else (buy_unfilled, buy_unfilled * maker_p, true);
+        if (min_quote < env.min_quote_amount) {
+          if (min_side) next_buy_o := true else next_sell_o := true;
+          continue timing;
+        };
+        var sell_u = getUser(sell_o.owner);
+        var buy_u = getUser(buy_o.owner);
+        var sell_sub = Book.getSubaccount(sell_u, sell_o.sub);
+        var buy_sub = Book.getSubaccount(buy_u, buy_o.sub);
+        sell_sub := Book.subaccLockBase(sell_sub, min_base);
+        buy_sub := Book.subaccLockQuote(buy_sub, min_quote);
+        sell_o := Book.lockOrder(sell_o, min_base);
+        buy_o := Book.lockOrder(buy_o, min_base);
+        sell_lvl := Book.levelLock(sell_lvl, min_base);
+        buy_lvl := Book.levelLock(buy_lvl, min_base);
+        base := Book.lockAmount(base, min_base);
+        quote := Book.lockAmount(quote, min_quote);
+
+        func saveMatch() {
+
+        };
+
         // if (not next_sell_o and not next_buy_o)
       };
       if (not next_sell_lvl and not next_buy_lvl) return await* trim(); // after everything, must be one next
@@ -706,6 +798,10 @@ shared (install) persistent actor class Canister(
 
     // };
     Error.text("No job available");
+  };
+
+  func remove() : B.RunRes {
+    Error.text("Peepee");
   };
 
   func match0(fee_collector : ICRC1T.Account, env : B.Environment, (sell_p : Nat, _sell_lvl : B.Price), (buy_p : Nat, _buy_lvl : B.Price)) : async* {
