@@ -42,7 +42,7 @@ shared (install) persistent actor class Canister(
   var place_dedupes : B.PlaceDedupes = RBTree.empty();
 
   var block_id = 0;
-  var blocks = RBTree.empty<Nat, Value.Type>();
+  var blocks = RBTree.empty<Nat, B.Block>();
 
   // public shared query func book_base_balances_of() : async [Nat] {
   //   []
@@ -494,7 +494,6 @@ shared (install) persistent actor class Canister(
   };
 
   var prev_build = null : ?Nat;
-  // var runners = RBTree.empty<Principal, Nat64>();
   public shared ({ caller }) func book_run(arg : B.RunArg) : async B.RunRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acc = { owner = caller; subaccount = arg.subaccount };
@@ -586,6 +585,7 @@ shared (install) persistent actor class Canister(
       case (#Ok ok) ok;
     };
     meta := env.meta;
+    let fee_collector = getFeeCollector();
     var start_sell_lvl = true;
     var start_buy_lvl = true;
     var next_sell_lvl = false;
@@ -856,16 +856,120 @@ shared (install) persistent actor class Canister(
         quote := Book.lockAmount(quote, min_quote);
 
         func saveMatch() {
+          orders := RBTree.insert(orders, Nat.compare, sell_id, sell_o);
+          orders := RBTree.insert(orders, Nat.compare, buy_id, buy_o);
           sell_book := Book.saveLevel(sell_book, sell_p, sell_lvl);
           buy_book := Book.saveLevel(buy_book, buy_p, buy_lvl);
+          sell_u := Book.saveSubaccount(sell_u, sell_o.sub, sell_sub);
+          sell_u := saveUser(sell_o.owner, sell_u);
+          buy_u := Book.saveSubaccount(buy_u, buy_o.sub, buy_sub);
+          buy_u := saveUser(buy_o.owner, buy_u);
         };
+        saveMatch();
+
+        let (amt, amt_q) = if (sell_unfilled < buy_unfilled) (sell_unfilled, sell_unfilled_q) else (buy_unfilled, buy_unfilled_q);
+        let (sell_fee, buy_fee) = if (sell_maker) (
+          (env.maker_fee_numer * amt_q) / env.fee_denom,
+          (env.taker_fee_numer * amt) / env.fee_denom,
+        ) else (
+          (env.taker_fee_numer * amt_q) / env.fee_denom,
+          (env.maker_fee_numer * amt) / env.fee_denom,
+        );
+        let sell_s = Subaccount.opt(sell_o.sub);
+        let sell_a = { owner = sell_o.owner; subaccount = sell_s };
+        let buy_s = Subaccount.opt(buy_o.sub);
+        let buy_a = { owner = buy_o.owner; subaccount = buy_s };
+
+        let base_i = {
+          account = sell_a;
+          token = env.base_token_id;
+          amount = amt;
+          action = #Unlock;
+        };
+        let quote_i = {
+          account = buy_a;
+          token = env.quote_token_id;
+          amount = amt_q;
+          action = #Unlock;
+        };
+        let instruction_blocks = [
+          [base_i, { base_i with action = #Transfer { to = buy_a } }],
+          [quote_i, { quote_i with action = #Transfer { to = sell_a } }],
+          [{
+            quote_i with account = sell_a;
+            amount = sell_fee;
+            action = #Transfer { to = fee_collector };
+          }],
+          [{
+            base_i with account = buy_a;
+            amount = buy_fee;
+            action = #Transfer { to = fee_collector };
+          }],
+        ];
+        func unlockMatch() {
+          sell_o := Book.unlockOrder(sell_o, amt);
+          buy_o := Book.unlockOrder(buy_o, amt);
+          base := Book.unlockAmount(base, amt);
+          quote := Book.unlockAmount(quote, amt_q);
+          sell_lvl := Book.getLevel(sell_book, sell_p);
+          sell_lvl := Book.levelUnlock(sell_lvl, amt);
+          buy_lvl := Book.getLevel(buy_book, buy_p);
+          buy_lvl := Book.levelUnlock(buy_lvl, amt);
+          sell_u := getUser(sell_o.owner);
+          sell_sub := Book.getSubaccount(sell_u, sell_o.sub);
+          sell_sub := Book.subaccUnlockBase(sell_sub, amt);
+          buy_u := getUser(buy_o.owner);
+          buy_sub := Book.getSubaccount(buy_u, buy_o.sub);
+          buy_sub := Book.subaccUnlockQuote(buy_sub, amt_q);
+        };
+        let exec_ids = switch (await env.vault.vault_execute(instruction_blocks)) {
+          case (#Err err) {
+            unlockMatch();
+            saveMatch();
+            return #Err(#TradeFailed { buy = buy_id; sell = sell_id; instruction_blocks; error = err });
+          };
+          case (#Ok ok) ok;
+        };
+        unlockMatch();
+        let sell_h = {
+          id = sell_id;
+          base = amt;
+          fee_quote = sell_fee;
+          execute = exec_ids[0];
+          fee_execute = exec_ids[2];
+        };
+        let buy_h = {
+          id = buy_id;
+          quote = amt_q;
+          fee_base = buy_fee;
+          execute = exec_ids[1];
+          fee_execute = exec_ids[3];
+        };
+        let trade = {
+          sell = sell_h;
+          buy = buy_h;
+          at = env.now;
+          price = maker_p;
+          block = block_id;
+        };
+        sell_o := Book.fillOrder(sell_o, amt, trade_id);
+        buy_o := Book.fillOrder(buy_o, amt, trade_id);
+        trades := RBTree.insert(trades, Nat.compare, trade_id, trade);
+        trade_id += 1;
+
+        base := Book.fillAmount(base, amt);
+        quote := Book.fillAmount(quote, amt_q);
+        sell_lvl := Book.levelFill(sell_lvl, amt);
+        buy_lvl := Book.levelFill(buy_lvl, amt);
+        sell_sub := Book.subaccFillBase(sell_sub, amt);
+        buy_sub := Book.subaccFillQuote(buy_sub, amt_q);
+        saveMatch();
+        // todo: blockify
 
         // if (not next_sell_o and not next_buy_o)
       };
       if (not next_sell_lvl and not next_buy_lvl) return await* trim(caller, sub, env); // after everything, must be one next
     };
-
-    let fee_collector = getFeeCollector();
 
     Error.text("No job available");
   };
@@ -1063,282 +1167,20 @@ shared (install) persistent actor class Canister(
         break trimming;
       };
     };
-    // todo: trim trades
-    Error.text("Summer");
+    label trimming while (round <= max_round) {
+      let (id, tr) = switch (RBTree.min(trades)) {
+        case (?min) min;
+        case _ break trimming;
+      };
+      round += 1;
+      switch (RBTree.get(orders, Nat.compare, tr.sell.id), RBTree.get(orders, Nat.compare, tr.buy.id)) {
+        case (null, null) trades := RBTree.delete(trades, Nat.compare, id);
+        case _ break trimming;
+      };
+    };
+    // label archiving while (round <= max_round) {
+    //   // todo: finish this
+    // };
+    Error.text("No job available");
   };
-
-  // func close(reason : { #Expired; #Filled }, oid : Nat, _o : B.Order, _lvl : B.Price, remain : Nat, env : B.Environment) : async* B.RunRes {
-  //   var o = _o;
-  //   var lvl = _lvl;
-  //   var user = getUser(o.owner);
-  //   var subacc = Book.getSubaccount(user, o.sub);
-  //   func execClose(proof : ?Nat) {
-  //     o := { o with closed = ?Book.newClose(); { at = env.now; reason; proof } };
-  //     lvl := { lvl with orders = RBTree.delete(lvl.orders, Nat.compare, oid) };
-  //     if (o.is_buy) {
-  //       subacc := {
-  //         subacc with buys = RBTree.delete(subacc.buys, Nat.compare, o.price)
-  //       };
-  //     } else {
-  //       subacc := {
-  //         subacc with sells = RBTree.delete(subacc.sells, Nat.compare, o.price)
-  //       };
-  //     };
-  //   };
-  //   func saveClose(expiry_too : Bool) {
-  //     orders := RBTree.insert(orders, Nat.compare, oid, o);
-  //     if (o.is_buy) buy_book := Book.saveLevel(buy_book, o.price, lvl) else sell_book := Book.saveLevel(sell_book, o.price, lvl);
-  //     user := Book.saveSubaccount(user, o.sub, subacc);
-  //     user := saveUser(o.owner, user);
-  //     if (expiry_too) {
-  //       var expiries = Book.getExpiries(orders_by_expiry, o.expires_at);
-  //       expiries := RBTree.delete(expiries, Nat.compare, oid);
-  //       orders_by_expiry := Book.saveExpiries(orders_by_expiry, o.expires_at, expiries);
-
-  //       let o_ttl = o.expires_at + env.ttl;
-  //       expiries := Book.getExpiries(orders_by_expiry, o_ttl);
-  //       expiries := RBTree.insert(expiries, Nat.compare, oid, ());
-  //       orders_by_expiry := Book.saveExpiries(orders_by_expiry, o_ttl, expiries);
-  //     };
-  //   };
-  //   if (remain == 0) {
-  //     execClose(null);
-  //     saveClose(true);
-  //     // todo: blockify
-  //     return #Ok 1;
-  //   };
-  //   o := { o with base = Book.lockAmount(o.base, remain) };
-  //   lvl := Book.levelLock(lvl, remain);
-  //   let (cid, amt) = if (o.is_buy) {
-  //     let remain_q = remain * o.price;
-  //     quote := Book.lockAmount(quote, remain_q);
-  //     subacc := Book.subaccLockQuote(subacc, remain_q);
-  //     (env.quote_token_id, remain_q);
-  //   } else {
-  //     base := Book.lockAmount(base, remain);
-  //     subacc := Book.subaccLockBase(subacc, remain);
-  //     (env.base_token_id, remain);
-  //   };
-  //   saveClose(false);
-  //   // todo: instructions might me empty due to fully fill?
-
-  //   func unlockClose() {
-  //     user := getUser(o.owner);
-  //     subacc := Book.getSubaccount(user, o.sub);
-  //     o := { o with base = Book.unlockAmount(o.base, remain) };
-  //     if (o.is_buy) {
-  //       lvl := Book.getLevel(buy_book, o.price);
-  //       lvl := Book.levelUnlock(lvl, remain);
-  //       quote := Book.unlockAmount(quote, amt);
-  //       subacc := Book.subaccUnlockQuote(subacc, amt);
-  //     } else {
-  //       lvl := Book.getLevel(sell_book, o.price);
-  //       lvl := Book.levelUnlock(lvl, remain);
-  //       base := Book.unlockAmount(base, amt);
-  //       subacc := Book.subaccUnlockBase(subacc, amt);
-  //     };
-  //   };
-  //   let instruction = {
-  //     account = { o with subaccount = Subaccount.opt(o.sub) };
-  //     token = cid;
-  //     amount = amt;
-  //     action = #Unlock;
-  //   };
-  //   try switch (await env.vault.vault_execute([[instruction]])) {
-  //     case (#Err err) {
-  //       unlockClose();
-  //       saveClose(false);
-  //       #Err(#CloseFailed { order = oid; instruction_blocks = [[instruction]]; error = err });
-  //     };
-  //     case (#Ok ok) {
-  //       unlockClose();
-  //       execClose(?ok[0]);
-  //       saveClose(true);
-  //       // todo: blockify
-  //       #Ok 1;
-  //     };
-  //   } catch (err) {
-  //     unlockClose();
-  //     saveClose(false);
-  //     #Err(Error.convert(err));
-  //   };
-  // };
-
-  // func match1(fee_collector : ICRC1T.Account, env : B.Environment, (sell_id : Nat, sell_p : Nat, _sell_lvl : B.Price), (buy_id : Nat, buy_p : Nat, _buy_lvl : B.Price)) : async* {
-  //   #Rest;
-  //   #Ok : Nat; // worked
-  //   #Err : B.RunErr;
-
-  //   #WrongSide : B.Order;
-  //   #WrongPrice : B.Order;
-  //   #SameId : B.Order;
-  //   #SameOwner;
-  //   #Next : Bool;
-  //   #Closed : Bool;
-  // } {
-  //   if (sell_id == buy_id) {};
-  //   var sell_o = switch (RBTree.get(orders, Nat.compare, sell_id)) {
-  //     case (?found) found;
-  //     case _ {
-  //       return #Next false; // todo: return the level too?
-  //     };
-  //   };
-
-  //   if (sell_o.is_buy) {
-  //     return #Next false;
-  //   };
-  //   if (sell_o.price != sell_p) {
-
-  //   };
-  //   if (sell_o.closed != null) return #Closed false;
-  //   if (sell_o.base.locked > 0) return #Next false;
-  //   let sell_remain = if (sell_o.base.initial > sell_o.base.filled) sell_o.base.initial - sell_o.base.filled else 0;
-  //   if (sell_o.expires_at < env.now) return await* close(#Expired, sell_id, sell_o, _sell_lvl, sell_remain, env);
-  //   if (sell_remain < env.min_base_amount) return await* close(#Filled, sell_id, sell_o, _sell_lvl, sell_remain, env);
-
-  //   var buy_o = switch (RBTree.get(orders, Nat.compare, buy_id)) {
-  //     case (?found) found;
-  //     case _ {
-  //       return #Next true;
-  //     };
-  //   };
-
-  //   if (not buy_o.is_buy) {
-  //     return #Next true;
-  //   };
-  //   if (buy_o.price != buy_p) return #WrongPrice buy_o;
-  //   if (buy_o.closed != null) return #Closed true;
-  //   if (buy_o.base.locked > 0) return #Next true;
-  //   let buy_remain = if (buy_o.base.initial > buy_o.base.filled) buy_o.base.initial - buy_o.base.filled else 0;
-  //   if (buy_o.expires_at < env.now) return await* close(#Expired, buy_id, buy_o, _buy_lvl, buy_remain, env);
-  //   if (buy_remain < env.min_base_amount) return await* close(#Filled, buy_id, buy_o, _buy_lvl, buy_remain, env);
-
-  //   let sell_maker = sell_id < buy_id;
-  //   let p = if (sell_maker) sell_o.price else buy_o.price;
-  //   if (sell_remain * p < env.min_quote_amount) return await* close(#Filled, sell_id, sell_o, _sell_lvl, sell_remain, env);
-  //   if (buy_remain * p < env.min_quote_amount) return await* close(#Filled, buy_id, buy_o, _buy_lvl, buy_remain, env);
-  //   if (sell_o.price > buy_o.price) return #Rest;
-
-  //   var seller = getUser(sell_o.owner);
-  //   var seller_sub = Book.getSubaccount(seller, sell_o.sub);
-  //   var buyer = getUser(buy_o.owner);
-  //   var buyer_sub = Book.getSubaccount(buyer, buy_o.sub);
-  //   if (sell_o.owner == buy_o.owner and sell_o.sub == buy_o.sub) return #SameOwner;
-
-  //   let amount = Nat.min(sell_remain, buy_remain);
-  //   let amount_q = amount * p;
-
-  //   sell_o := { sell_o with base = Book.lockAmount(sell_o.base, amount) };
-  //   buy_o := { buy_o with base = Book.lockAmount(buy_o.base, amount) };
-
-  //   var sell_lvl = Book.levelLock(_sell_lvl, amount);
-  //   var buy_lvl = Book.levelLock(_buy_lvl, amount);
-
-  //   base := Book.lockAmount(base, amount);
-  //   quote := Book.lockAmount(quote, amount_q);
-
-  //   seller_sub := Book.subaccLockBase(seller_sub, amount);
-  //   buyer_sub := Book.subaccLockQuote(buyer_sub, amount_q);
-
-  //   func saveMatch() {
-  //     orders := RBTree.insert(orders, Nat.compare, sell_id, sell_o);
-  //     orders := RBTree.insert(orders, Nat.compare, buy_id, buy_o);
-  //     sell_book := Book.saveLevel(sell_book, sell_p, sell_lvl);
-  //     buy_book := Book.saveLevel(buy_book, buy_p, buy_lvl);
-  //     seller := Book.saveSubaccount(seller, sell_o.sub, seller_sub);
-  //     seller := saveUser(sell_o.owner, seller);
-  //     buyer := Book.saveSubaccount(buyer, buy_o.sub, buyer_sub);
-  //     buyer := saveUser(buy_o.owner, buyer);
-  //   };
-  //   saveMatch();
-
-  //   let (seller_fee, buyer_fee) = if (sell_maker) (
-  //     (env.maker_fee_numer * amount_q) / env.fee_denom,
-  //     (env.taker_fee_numer * amount) / env.fee_denom,
-  //   ) else (
-  //     (env.taker_fee_numer * amount_q) / env.fee_denom,
-  //     (env.maker_fee_numer * amount) / env.fee_denom,
-  //   );
-  //   let sell_acc = { sell_o with subaccount = Subaccount.opt(sell_o.sub) };
-  //   let buy_acc = { buy_o with subaccount = Subaccount.opt(buy_o.sub) };
-  //   let base_i = {
-  //     account = sell_acc;
-  //     token = env.base_token_id;
-  //     amount;
-  //     action = #Unlock;
-  //   };
-  //   let quote_i = {
-  //     account = buy_acc;
-  //     token = env.quote_token_id;
-  //     amount = amount_q;
-  //     action = #Unlock;
-  //   };
-  //   let instructions_buff = Buffer.Buffer<V.Instruction>(6);
-  //   instructions_buff.add(base_i);
-  //   instructions_buff.add(quote_i);
-  //   instructions_buff.add({ base_i with action = #Transfer { to = buy_acc } });
-  //   instructions_buff.add({ quote_i with action = #Transfer { to = sell_acc } });
-  //   if (seller_fee > 0) instructions_buff.add({
-  //     quote_i with account = sell_acc;
-  //     amount = seller_fee;
-  //     action = #Transfer { to = fee_collector };
-  //   });
-  //   if (buyer_fee > 0) instructions_buff.add({
-  //     base_i with account = buy_acc;
-  //     amount = buyer_fee;
-  //     action = #Transfer { to = fee_collector };
-  //   });
-  //   let instruction_blocks = [Buffer.toArray(instructions_buff)];
-  //   func unlockMatch() {
-  //     sell_o := {
-  //       sell_o with base = Book.unlockAmount(sell_o.base, amount)
-  //     };
-  //     buy_o := { buy_o with base = Book.unlockAmount(buy_o.base, amount) };
-  //     base := Book.unlockAmount(base, amount);
-  //     quote := Book.unlockAmount(quote, amount_q);
-
-  //     sell_lvl := Book.getLevel(sell_book, sell_p);
-  //     sell_lvl := Book.levelUnlock(sell_lvl, amount);
-  //     buy_lvl := Book.getLevel(buy_book, buy_p);
-  //     buy_lvl := Book.levelUnlock(buy_lvl, amount);
-
-  //     seller := getUser(sell_o.owner);
-  //     seller_sub := Book.getSubaccount(seller, sell_o.sub);
-  //     seller_sub := Book.subaccUnlockBase(seller_sub, amount);
-  //     buyer := getUser(buy_o.owner);
-  //     buyer_sub := Book.getSubaccount(buyer, buy_o.sub);
-  //     buyer_sub := Book.subaccUnlockQuote(buyer_sub, amount_q);
-  //   };
-  //   try switch (await env.vault.vault_execute(instruction_blocks)) {
-  //     case (#Err err) {
-  //       unlockMatch();
-  //       saveMatch();
-  //       #Err(#TradeFailed { buy = buy_id; sell = sell_id; instruction_blocks; error = err });
-  //     };
-  //     case (#Ok ok) {
-  //       unlockMatch();
-  //       let sell = { id = sell_id; base = amount; fee_quote = seller_fee };
-  //       let buy = { id = buy_id; quote = amount_q; fee_base = buyer_fee };
-  //       let trade = { sell; buy; at = env.now; price = p; proof = ok[0] };
-  //       sell_o := Book.fillOrder(sell_o, amount, trade_id);
-  //       buy_o := Book.fillOrder(buy_o, amount, trade_id);
-  //       trades := RBTree.insert(trades, Nat.compare, trade_id, trade);
-  //       trade_id += 1;
-
-  //       base := Book.fillAmount(base, amount);
-  //       quote := Book.fillAmount(quote, amount_q);
-  //       sell_lvl := Book.levelFill(sell_lvl, amount);
-  //       buy_lvl := Book.levelFill(buy_lvl, amount);
-  //       seller_sub := Book.subaccFillBase(seller_sub, amount);
-  //       buyer_sub := Book.subaccFillQuote(buyer_sub, amount_q);
-  //       saveMatch();
-  //       // todo: blockify
-  //       #Ok 1;
-  //     };
-  //   } catch (err) {
-  //     unlockMatch();
-  //     saveMatch();
-  //     #Err(Error.convert(err));
-  //   };
-  // };
 };

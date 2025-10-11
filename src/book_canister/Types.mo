@@ -49,11 +49,23 @@ module {
   public type Price = { base : Amount; orders : Nats };
   public type Book = RBTree.Type<(price : Nat), Price>;
   public type Trade = {
-    sell : { id : Nat; base : Nat; fee_quote : Nat };
-    buy : { id : Nat; quote : Nat; fee_base : Nat };
+    sell : {
+      id : Nat;
+      base : Nat;
+      fee_quote : Nat;
+      execute : Nat;
+      fee_execute : Nat;
+    };
+    buy : {
+      id : Nat;
+      quote : Nat;
+      fee_base : Nat;
+      execute : Nat;
+      fee_execute : Nat;
+    };
     at : Nat64;
     price : Nat;
-    execute : Nat;
+    block : Nat;
   };
   public type CloseReason = {
     #FullyFilled;
@@ -202,4 +214,13 @@ module {
   };
   public type PlaceDedupes = RBTree.Type<(Principal, PlaceArg), Nat>;
 
+  public type Block = {
+    val : Value.Type;
+    valh : Blob;
+    idh : Blob;
+    locked : ?{
+      caller : Principal;
+      at : Nat64;
+    };
+  };
 };
