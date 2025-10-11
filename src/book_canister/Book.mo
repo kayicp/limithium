@@ -76,13 +76,9 @@ module {
     trades = RBTree.empty();
     closed = null;
   };
-  public func newClose(caller : Principal, sub : Blob, at : Nat64, block : ?Nat, reason : B.CloseReason, execute : ?Nat) : B.Closed = {
-    caller;
-    sub;
-    at;
-    block;
-    reason;
-    execute;
+  public func isClosing(c : B.CloseReason) : Bool = switch c {
+    case (#AlmostFilled null or #Expired null or #Canceled null) true;
+    case _ false;
   };
   public func getLevel(book : B.Book, price : Nat) : B.Price = switch (RBTree.get(book, Nat.compare, price)) {
     case (?found) found;
@@ -129,9 +125,11 @@ module {
   public func subaccNewBuy(s : B.Subaccount, oid : Nat, o : B.Order) : B.Subaccount = ({
     s with buys = RBTree.insert(s.buys, Nat.compare, o.price, oid);
   });
+  // todo: call this
   public func subaccDelSell(s : B.Subaccount, o : B.Order) : B.Subaccount = ({
     s with sells = RBTree.delete(s.sells, Nat.compare, o.price);
   });
+  // todo: call this
   public func subaccDelBuy(s : B.Subaccount, o : B.Order) : B.Subaccount = ({
     s with buys = RBTree.delete(s.buys, Nat.compare, o.price);
   });

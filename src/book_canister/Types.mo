@@ -56,16 +56,15 @@ module {
     execute : Nat;
   };
   public type CloseReason = {
-    #Filled;
-    #Expired;
-    #Canceled;
+    #FullyFilled;
+    #AlmostFilled : ?{ block : Nat; execute : Nat };
+    #Expired : ?{ block : Nat; execute : Nat };
+    #Canceled : ?{ block : Nat; execute : Nat };
   };
   public type Closed = {
     caller : Principal;
     sub : Blob;
     at : Nat64;
-    block : ?Nat;
-    execute : ?Nat;
     reason : CloseReason;
   };
   public type Order = {
@@ -149,6 +148,7 @@ module {
     #NotFound : { index : Nat };
     #Closed : { index : Nat; at : Nat64 };
     #Locked : { index : Nat };
+    #NoRefund;
     #BadFee : { expected_base : Nat; expected_quote : Nat };
     #InsufficientBalance : { base_balance : Nat; quote_balance : Nat };
     #ExecutionFailed : {
