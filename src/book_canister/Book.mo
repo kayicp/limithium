@@ -183,6 +183,18 @@ module {
     RBTree.insert(e, Nat64.compare, t, ids);
   } else RBTree.delete(e, Nat64.compare, t);
 
+  public func newExpiry(exps : B.Expiries, t : Nat64, id : Nat) : B.Expiries {
+    var expiries = getExpiries(exps, t);
+    expiries := RBTree.insert(expiries, Nat.compare, id, ());
+    saveExpiries(exps, t, expiries);
+  };
+
+  public func delExpiry(exps : B.Expiries, t : Nat64, id : Nat) : B.Expiries {
+    var expiries = getExpiries(exps, t);
+    expiries := RBTree.delete(expiries, Nat.compare, id);
+    saveExpiries(exps, t, expiries);
+  };
+
   public func getEnvironment(_meta : Value.Metadata) : async* Result.Type<B.Environment, Error.Generic> {
     var meta = _meta;
     let vault = switch (Value.metaPrincipal(meta, B.VAULT)) {

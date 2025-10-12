@@ -167,9 +167,7 @@ shared (install) persistent actor class Canister(
       orders := RBTree.insert(orders, Nat.compare, order_id, new_order);
       subacc := Book.subaccNewOrder(subacc, order_id);
 
-      var expiries = Book.getExpiries(orders_by_expiry, o.expiry);
-      expiries := RBTree.insert(expiries, Nat.compare, order_id, ());
-      orders_by_expiry := Book.saveExpiries(orders_by_expiry, o.expiry, expiries);
+      orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expiry, order_id);
       new_order;
     };
     for ((o_price, o) in RBTree.entries(lsells)) {
@@ -323,14 +321,8 @@ shared (install) persistent actor class Canister(
           base := Book.decAmount(base, o.data.base);
           Book.subaccDecBase(subacc, o.data.base);
         };
-        var expiries = Book.getExpiries(orders_by_expiry, o.data.expires_at);
-        expiries := RBTree.delete(expiries, Nat.compare, oid); // remove from expires at
-        orders_by_expiry := Book.saveExpiries(orders_by_expiry, o.data.expires_at, expiries);
-
-        let o_ttl = o.data.expires_at + env.ttl; // add to ttl
-        expiries := Book.getExpiries(orders_by_expiry, o_ttl);
-        expiries := RBTree.insert(expiries, Nat.compare, oid, ());
-        orders_by_expiry := Book.saveExpiries(orders_by_expiry, o_ttl, expiries);
+        orders_by_expiry := Book.delExpiry(orders_by_expiry, o.data.expires_at, oid);
+        orders_by_expiry := Book.newExpiry(orders_by_expiry, o.data.expires_at + env.ttl, oid);
       };
       user := Book.saveSubaccount(user, sub, subacc);
       user := saveUser(caller, user);
@@ -397,14 +389,8 @@ shared (install) persistent actor class Canister(
               base := Book.decAmount(base, order.base);
               subacc := Book.subaccDecBase(subacc, order.base);
             };
-            var expiries = Book.getExpiries(orders_by_expiry, order.expires_at);
-            expiries := RBTree.delete(expiries, Nat.compare, oid); // remove from expires at
-            orders_by_expiry := Book.saveExpiries(orders_by_expiry, order.expires_at, expiries);
-
-            let o_ttl = order.expires_at + env.ttl; // add to ttl
-            expiries := Book.getExpiries(orders_by_expiry, o_ttl);
-            expiries := RBTree.insert(expiries, Nat.compare, oid, ());
-            orders_by_expiry := Book.saveExpiries(orders_by_expiry, o_ttl, expiries);
+            orders_by_expiry := Book.delExpiry(orders_by_expiry, order.expires_at, oid);
+            orders_by_expiry := Book.newExpiry(orders_by_expiry, order.expires_at + env.ttl, oid);
 
             let execute = exec_ids[o.instruction_index];
             let proof = ?{ block = block_id; execute };
@@ -434,6 +420,8 @@ shared (install) persistent actor class Canister(
     // todo: blockify
     #Ok 1;
   };
+
+  public shared query func archive_min_block() : async ?Nat = async RBTree.minKey(blocks);
 
   func getUser(p : Principal) : B.User = switch (RBTree.get(users, Principal.compare, p)) {
     case (?found) found;
@@ -825,10 +813,10 @@ shared (install) persistent actor class Canister(
         let sell_unfilled_q = sell_unfilled * sell_o.price;
         let buy_unfilled = buy_o.base.initial - buy_o.base.filled;
         let buy_unfilled_q = buy_unfilled * buy_o.price;
-        if (sell_o.expires_at < env.now) return await* closeRefund(caller, sub, env, #Expired null, sell_id, sell_o, sell_unfilled, sell_lvl, sell_unfilled_q);
-        if (buy_o.expires_at < env.now) return await* closeRefund(caller, sub, env, #Expired null, buy_id, buy_o, buy_unfilled, buy_lvl, buy_unfilled_q);
-        if (sell_unfilled < env.min_base_amount or sell_unfilled_q < env.min_quote_amount) return await* closeRefund(caller, sub, env, #AlmostFilled null, sell_id, sell_o, sell_unfilled, sell_lvl, sell_unfilled_q);
-        if (buy_unfilled < env.min_base_amount or buy_unfilled_q < env.min_quote_amount) return await* closeRefund(caller, sub, env, #AlmostFilled null, buy_id, buy_o, buy_unfilled, buy_lvl, buy_unfilled_q);
+        if (sell_o.expires_at < env.now) return await* refundClose(caller, sub, env, #Expired null, sell_id, sell_o, sell_unfilled, sell_lvl, sell_unfilled_q);
+        if (buy_o.expires_at < env.now) return await* refundClose(caller, sub, env, #Expired null, buy_id, buy_o, buy_unfilled, buy_lvl, buy_unfilled_q);
+        if (sell_unfilled < env.min_base_amount or sell_unfilled_q < env.min_quote_amount) return await* refundClose(caller, sub, env, #AlmostFilled null, sell_id, sell_o, sell_unfilled, sell_lvl, sell_unfilled_q);
+        if (buy_unfilled < env.min_base_amount or buy_unfilled_q < env.min_quote_amount) return await* refundClose(caller, sub, env, #AlmostFilled null, buy_id, buy_o, buy_unfilled, buy_lvl, buy_unfilled_q);
 
         let sell_maker = sell_id < buy_id;
         if (sell_o.owner == buy_o.owner /* and sell_o.sub == buy_o.sub  // do not check subaccount since we getUser() for both buyer & seller*/) {
@@ -974,7 +962,7 @@ shared (install) persistent actor class Canister(
     Error.text("No job available");
   };
 
-  func closeRefund(caller : Principal, sub : Blob, env : B.Environment, reason : { #Expired : Null; #AlmostFilled : Null }, oid : Nat, _o : B.Order, unfilled : Nat, _lvl : B.Price, unfilled_q : Nat) : async* B.RunRes {
+  func refundClose(caller : Principal, sub : Blob, env : B.Environment, reason : { #Expired : Null; #AlmostFilled : Null }, oid : Nat, _o : B.Order, unfilled : Nat, _lvl : B.Price, unfilled_q : Nat) : async* B.RunRes {
     var o = _o;
     o := { o with closed = ?{ caller; sub; reason; at = env.now } };
     o := Book.lockOrder(o, unfilled);
@@ -1034,14 +1022,8 @@ shared (install) persistent actor class Canister(
             base := Book.decAmount(base, o.base);
             subacc := Book.subaccDecBase(subacc, o.base);
           };
-          var expiries = Book.getExpiries(orders_by_expiry, o.expires_at);
-          expiries := RBTree.delete(expiries, Nat.compare, oid); // remove from expires at
-          orders_by_expiry := Book.saveExpiries(orders_by_expiry, o.expires_at, expiries);
-
-          let o_ttl = o.expires_at + env.ttl; // add to ttl
-          expiries := Book.getExpiries(orders_by_expiry, o_ttl);
-          expiries := RBTree.insert(expiries, Nat.compare, oid, ());
-          orders_by_expiry := Book.saveExpiries(orders_by_expiry, o_ttl, expiries);
+          orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, oid);
+          orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expires_at + env.ttl, oid);
 
           let proof = ?{ block = block_id; execute };
           let rzn = switch reason {
@@ -1128,22 +1110,16 @@ shared (install) persistent actor class Canister(
             user := Book.saveSubaccount(user, o.sub, subacc);
             user := saveUser(o.owner, user);
 
-            var expiries = Book.getExpiries(orders_by_expiry, o.expires_at); // remove from expires at
-            expiries := RBTree.delete(expiries, Nat.compare, id);
-            orders_by_expiry := Book.saveExpiries(orders_by_expiry, o.expires_at, expiries);
-
-            let o_ttl = o.expires_at + env.ttl; // add to ttl
-            expiries := Book.getExpiries(orders_by_expiry, o_ttl);
-            expiries := RBTree.insert(expiries, Nat.compare, id, ());
-            orders_by_expiry := Book.saveExpiries(orders_by_expiry, o_ttl, expiries);
+            orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, id);
+            orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expires_at + env.ttl, id);
 
             continue trimming;
           };
           let unfilled = o.base.initial - o.base.filled;
           let unfilled_q = unfilled * o.price;
           var lvl = if (o.is_buy) Book.getLevel(buy_book, o.price) else Book.getLevel(sell_book, o.price);
-          if (o.expires_at < env.now) return await* closeRefund(caller, sub, env, #Expired null, id, o, unfilled, lvl, unfilled_q);
-          if (unfilled < env.min_base_amount or unfilled_q < env.min_quote_amount) return await* closeRefund(caller, sub, env, #AlmostFilled null, id, o, unfilled, lvl, unfilled_q);
+          if (o.expires_at < env.now) return await* refundClose(caller, sub, env, #Expired null, id, o, unfilled, lvl, unfilled_q);
+          if (unfilled < env.min_base_amount or unfilled_q < env.min_quote_amount) return await* refundClose(caller, sub, env, #AlmostFilled null, id, o, unfilled, lvl, unfilled_q);
         } else {
           if (o.expires_at < exp_t and exp_t < env.now) {
             orders := RBTree.delete(orders, Nat.compare, id);
@@ -1154,14 +1130,8 @@ shared (install) persistent actor class Canister(
             user := saveUser(o.owner, user);
             continue trimming; // delete from ttl
           } else {
-            var expiries = Book.getExpiries(orders_by_expiry, o.expires_at); // remove from expires at
-            expiries := RBTree.delete(expiries, Nat.compare, id);
-            orders_by_expiry := Book.saveExpiries(orders_by_expiry, o.expires_at, expiries);
-
-            let o_ttl = o.expires_at + env.ttl; // add to ttl
-            expiries := Book.getExpiries(orders_by_expiry, o_ttl);
-            expiries := RBTree.insert(expiries, Nat.compare, id, ());
-            orders_by_expiry := Book.saveExpiries(orders_by_expiry, o_ttl, expiries);
+            orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, id);
+            orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expires_at + env.ttl, id);
           };
         };
         break trimming;
@@ -1183,4 +1153,5 @@ shared (install) persistent actor class Canister(
     // };
     Error.text("No job available");
   };
+
 };

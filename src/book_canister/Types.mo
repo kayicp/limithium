@@ -37,6 +37,7 @@ module {
   public let MIN_MEMO = "book:min_memo_size";
   public let MAX_MEMO = "book:max_memo_size";
   public let FEE_COLLECTOR = "book:fee_collector";
+  // todo: add multiplier at book
 
   // todo: add `block_id` to order and trade object
   public type Nats = RBTree.Type<Nat, ()>;

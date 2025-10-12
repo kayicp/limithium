@@ -16,8 +16,6 @@ import Vault "Vault";
 import Result "../util/motoko/Result";
 import Subaccount "../util/motoko/Subaccount";
 
-// todo: lets not use user/subacc id mapping, store everything as-is
-
 shared (install) persistent actor class Canister(
   // deploy : {
   //   #Init : ();

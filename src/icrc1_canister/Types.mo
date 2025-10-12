@@ -125,8 +125,4 @@ module {
   public type EnqueueErrors = {
     #GenericError : Error.Type;
   };
-
-  public type Actor = actor {
-
-  };
 };
