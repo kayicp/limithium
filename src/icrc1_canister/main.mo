@@ -245,6 +245,12 @@ shared (install) persistent actor class Canister(
     };
     meta := env.meta;
 
+    var max_batch_size = Value.getNat(meta, I.MAX_UPDATE_BATCH, 0);
+    if (max_batch_size < 1) max_batch_size := 1;
+    if (max_batch_size > 100) max_batch_size := 100;
+    meta := Value.setNat(meta, I.MAX_UPDATE_BATCH, ?max_batch_size);
+    if (enqueues.size() > max_batch_size) return #Err(#BatchTooLarge { batch_size = enqueues.size(); maximum_batch_size = max_batch_size });
+
     var id = switch (RBTree.maxKey(mint_queue)) {
       case (?max) max + 1;
       case _ 0;

@@ -1,9 +1,13 @@
 import B "Types";
 import Book "Book";
 import V "../vault_canister/Types";
+import A "../archive_canister/Types";
+import Archive "../archive_canister/main";
+import ArchiveL "../archive_canister/Archive";
 
 import ICRC1T "../icrc1_canister/Types";
 import ICRC1L "../icrc1_canister/ICRC1";
+import ICRC3T "../util/motoko/ICRC-3/Types";
 import Value "../util/motoko/Value";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Error "../util/motoko/Error";
@@ -17,6 +21,11 @@ import Buffer "mo:base/Buffer";
 import Result "../util/motoko/Result";
 import Time64 "../util/motoko/Time64";
 import Subaccount "../util/motoko/Subaccount";
+import LEB128 "mo:leb128";
+import MerkleTree "../util/motoko/MerkleTree";
+import CertifiedData "mo:base/CertifiedData";
+import Text "mo:base/Text";
+import Cycles "mo:core/Cycles";
 
 shared (install) persistent actor class Canister(
   // deploy : {
@@ -24,6 +33,10 @@ shared (install) persistent actor class Canister(
   //   #Upgrade;
   // }
 ) = Self {
+  var tip_cert = MerkleTree.empty();
+  func updateTipCert() = CertifiedData.set(MerkleTree.treeHash(tip_cert)); // also call this on deploy.init
+  system func postupgrade() = updateTipCert(); // https://gist.github.com/nomeata/f325fcd2a6692df06e38adedf9ca1877
+
   var meta : Value.Metadata = RBTree.empty();
   var users : B.Users = RBTree.empty();
 
@@ -43,6 +56,9 @@ shared (install) persistent actor class Canister(
 
   var block_id = 0;
   var blocks = RBTree.empty<Nat, B.Block>();
+
+  var reward_id = 0;
+  var rewards = RBTree.empty<Nat, (ICRC1T.Enqueue, locked : Bool)>();
 
   // public shared query func book_base_balances_of() : async [Nat] {
   //   []
@@ -198,7 +214,6 @@ shared (install) persistent actor class Canister(
     #Ok([]);
   };
 
-  // todo: only blockify refundable orders, close the rest in background (if it's in the arg, dont return error but relax)
   public shared ({ caller }) func book_close(arg : B.CancelArg) : async B.CancelRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
     if (prev_build != RBTree.maxKey(orders)) return Error.text("Orderbook needs rebuilding. Please call `book_run`");
@@ -329,9 +344,6 @@ shared (install) persistent actor class Canister(
     };
     if (RBTree.size(refundables) == 0) return #Err(#Closed { index = 0; at = env.now });
 
-    let user_bals = await env.vault.vault_locked_balances_of([{ account = user_acc; token = env.base_token_id }, { account = user_acc; token = env.quote_token_id }]);
-    if (user_bals[0] < lbase or user_bals[1] < lquote) return #Err(#InsufficientBalance { base_balance = user_bals[0]; quote_balance = user_bals[1] }); // todo: save lock before await?
-
     base := Book.lockAmount(base, lbase);
     quote := Book.lockAmount(quote, lquote);
 
@@ -351,8 +363,7 @@ shared (install) persistent actor class Canister(
     subacc := Book.subaccLockBase(subacc, lbase);
     user := Book.saveSubaccount(user, sub, subacc);
     user := saveUser(caller, user);
-    let instruction_blocks = Buffer.toArray(refunds_buff);
-    let execute_res = await env.vault.vault_execute(instruction_blocks);
+
     func unlock(execute_ok : ?[Nat]) {
       user := getUser(caller);
       subacc := Book.getSubaccount(user, sub);
@@ -409,6 +420,16 @@ shared (install) persistent actor class Canister(
       user := Book.saveSubaccount(user, sub, subacc);
       user := saveUser(caller, user);
     };
+
+    let user_bals = await env.vault.vault_locked_balances_of([{ account = user_acc; token = env.base_token_id }, { account = user_acc; token = env.quote_token_id }]);
+    if (user_bals[0] < lbase or user_bals[1] < lquote) {
+      unlock(null);
+      return #Err(#InsufficientBalance { base_balance = user_bals[0]; quote_balance = user_bals[1] });
+    };
+
+    let instruction_blocks = Buffer.toArray(refunds_buff);
+    let execute_res = await env.vault.vault_execute(instruction_blocks);
+
     let execution_ids = switch execute_res {
       case (#Err err) {
         unlock(null);
@@ -487,11 +508,16 @@ shared (install) persistent actor class Canister(
     let user_acc = { owner = caller; subaccount = arg.subaccount };
     if (not ICRC1L.validateAccount(user_acc)) return Error.text("Caller account is not valid");
     let sub = Subaccount.get(arg.subaccount);
+    let env = switch (await* Book.getEnvironment(meta)) {
+      case (#Err err) return #Err err;
+      case (#Ok ok) ok;
+    };
+    meta := env.meta;
     switch prev_build {
       case (?built_until) switch (RBTree.maxKey(orders)) {
         case (?max_oid) switch (Nat.compare(built_until, max_oid)) {
           case (#less) build();
-          case _ await* run(caller, sub);
+          case _ await* trim(caller, sub, env);
         };
         case _ Error.text("Empty orders");
       };
@@ -563,16 +589,233 @@ shared (install) persistent actor class Canister(
     Error.text("Built: " # debug_show (Buffer.toArray(res)));
   };
 
+  func trim(caller : Principal, sub : Blob, env : B.Environment) : async* B.RunRes {
+    var round = 0;
+    let max_round = 100;
+    label trimming while (round <= max_round) {
+      let (exp_t, exp_ids) = switch (RBTree.min(orders_by_expiry)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      while (round <= max_round) {
+        round += 1;
+        let id = switch (RBTree.minKey(exp_ids)) {
+          case (?min) min;
+          case _ {
+            orders_by_expiry := RBTree.delete(orders_by_expiry, Nat64.compare, exp_t);
+            continue trimming;
+          };
+        };
+        var o = switch (RBTree.get(orders, Nat.compare, id)) {
+          case (?found) found;
+          case _ {
+            let missing_o = RBTree.delete(exp_ids, Nat.compare, id);
+            orders_by_expiry := Book.saveExpiries(orders_by_expiry, exp_t, missing_o);
+            continue trimming;
+          };
+        };
+        let is_open = switch (o.closed) {
+          case (?cl) if (Book.isClosing(cl.reason)) break trimming else false;
+          case _ true;
+        };
+        if (is_open) {
+          if (o.base.locked > 0) break trimming;
+          if (o.base.filled >= o.base.initial) {
+            let closed = ?{ caller; sub; reason = #FullyFilled; at = env.now };
+            o := { o with closed };
+            orders := RBTree.insert(orders, Nat.compare, id, o);
+
+            var user = getUser(o.owner);
+            var subacc = Book.getSubaccount(user, o.sub);
+            if (o.is_buy) {
+              var lvl = Book.getLevel(buy_book, o.price);
+              lvl := Book.levelDecAmount(lvl, o.base);
+              lvl := Book.levelDelOrder(lvl, id);
+              buy_book := Book.saveLevel(buy_book, o.price, lvl);
+
+              base := Book.decAmount(base, o.base);
+              subacc := Book.subaccDecBase(subacc, o.base);
+            } else {
+              var lvl = Book.getLevel(sell_book, o.price);
+              lvl := Book.levelDecAmount(lvl, o.base);
+              lvl := Book.levelDelOrder(lvl, id);
+              sell_book := Book.saveLevel(sell_book, o.price, lvl);
+
+              let o_quote = Book.mulAmount(o.base, o.price);
+              quote := Book.decAmount(base, o_quote);
+              subacc := Book.subaccDecQuote(subacc, o_quote);
+            };
+            user := Book.saveSubaccount(user, o.sub, subacc);
+            user := saveUser(o.owner, user);
+
+            orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, id);
+            orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expires_at + env.ttl, id);
+
+            continue trimming;
+          };
+          let unfilled = o.base.initial - o.base.filled;
+          let unfilled_q = unfilled * o.price;
+          var lvl = if (o.is_buy) Book.getLevel(buy_book, o.price) else Book.getLevel(sell_book, o.price);
+          if (o.expires_at < env.now) return await* refundClose(caller, sub, env, #Expired null, id, o, unfilled, lvl, unfilled_q);
+          if (unfilled < env.min_base_amount or unfilled_q < env.min_quote_amount) return await* refundClose(caller, sub, env, #AlmostFilled null, id, o, unfilled, lvl, unfilled_q);
+        } else {
+          if (o.expires_at < exp_t and exp_t < env.now) {
+            orders := RBTree.delete(orders, Nat.compare, id);
+            var user = getUser(o.owner);
+            var subacc = Book.getSubaccount(user, o.sub);
+            subacc := Book.subaccDelOrder(subacc, id);
+            user := Book.saveSubaccount(user, o.sub, subacc);
+            user := saveUser(o.owner, user);
+            continue trimming; // delete from ttl
+          } else {
+            orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, id);
+            orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expires_at + env.ttl, id);
+          };
+        };
+        break trimming;
+      };
+    };
+    label trimming while (round <= max_round) {
+      let (id, tr) = switch (RBTree.min(trades)) {
+        case (?min) min;
+        case _ break trimming;
+      };
+      round += 1;
+      switch (RBTree.get(orders, Nat.compare, tr.sell.id), RBTree.get(orders, Nat.compare, tr.buy.id)) {
+        case (null, null) trades := RBTree.delete(trades, Nat.compare, id);
+        case _ break trimming;
+      };
+    };
+    if (round <= max_round) switch (await* sendBlock()) {
+      case (#Ok) return Error.text("No job available");
+      case (#Err(#Async err)) return #Err(err);
+      case (#Err(#Sync _)) round += 1;
+    };
+    await* match(caller, sub, env, round, max_round);
+  };
+
+  func newBlock(id : Nat, val : Value.Type) : async* Nat {
+    block_id += 1;
+    let valh = Value.hash(val);
+    let idh = Blob.fromArray(LEB128.toUnsignedBytes(id));
+    blocks := RBTree.insert(blocks, Nat.compare, id, { val; valh; idh; locked = false });
+
+    tip_cert := MerkleTree.empty();
+    tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_INDEX)], idh);
+    tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_HASH)], valh);
+    updateTipCert();
+
+    id;
+  };
+
+  func sendBlock() : async* Result.Type<(), { #Sync : Error.Generic; #Async : Error.Generic }> {
+    var max_batch = Value.getNat(meta, A.MAX_UPDATE_BATCH_SIZE, 0);
+    if (max_batch == 0) max_batch := 1;
+    if (max_batch > 100) max_batch := 100;
+    meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?max_batch);
+
+    if (RBTree.size(blocks) <= max_batch) return #Err(#Sync(Error.generic("Not enough blocks to archive", 0)));
+    var locks = RBTree.empty<Nat, B.Block>();
+    let batch_buff = Buffer.Buffer<ICRC3T.BlockResult>(max_batch);
+    label collecting for ((b_id, b) in RBTree.entries(blocks)) {
+      if (b.locked) return #Err(#Sync(Error.generic("Some blocks are locked for archiving", 0)));
+      locks := RBTree.insert(locks, Nat.compare, b_id, b);
+      batch_buff.add({ id = b_id; block = b.val });
+      if (batch_buff.size() >= max_batch) break collecting;
+    };
+    for ((b_id, b) in RBTree.entries(locks)) blocks := RBTree.insert(blocks, Nat.compare, b_id, { b with locked = true });
+    func reunlock<T>(t : T) : T {
+      for ((b_id, b) in RBTree.entries(locks)) blocks := RBTree.insert(blocks, Nat.compare, b_id, { b with locked = false });
+      t;
+    };
+    let root = switch (Value.metaPrincipal(meta, A.ROOT)) {
+      case (?exist) exist;
+      case _ switch (await* createArchive(null)) {
+        case (#Ok created) created;
+        case (#Err err) return reunlock(#Err(#Async(err)));
+      };
+    };
+    let batch = Buffer.toArray(batch_buff);
+    let start = batch[0].id;
+    var prev_redir : A.Redirect = #Ask(actor (Principal.toText(root)));
+    var curr_redir = prev_redir;
+    var next_redir = try await (actor (Principal.toText(root)) : Archive.Canister).rb_archive_ask(start) catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+
+    label travelling while true {
+      switch (ArchiveL.validateSequence(prev_redir, curr_redir, next_redir)) {
+        case (#Err msg) return reunlock(#Err(#Async(Error.generic(msg, 0))));
+        case _ ();
+      };
+      prev_redir := curr_redir;
+      curr_redir := next_redir;
+      next_redir := switch next_redir {
+        case (#Ask cnstr) try await cnstr.rb_archive_ask(start) catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+        case (#Add cnstr) {
+          let cnstr_id = Principal.fromActor(cnstr);
+          try {
+            switch (await cnstr.rb_archive_add(batch)) {
+              case (#Err(#InvalidDestination r)) r;
+              case (#Err(#UnexpectedBlock x)) return reunlock(#Err(#Async(Error.generic("UnexpectedBlock: " # debug_show x, 0))));
+              case (#Err(#MinimumBlockViolation x)) return reunlock(#Err(#Async(Error.generic("MinimumBlockViolation: " # debug_show x, 0))));
+              case (#Err(#BatchTooLarge x)) return reunlock(#Err(#Async(Error.generic("BatchTooLarge: " # debug_show x, 0))));
+              case (#Err(#GenericError x)) return reunlock(#Err(#Async(#GenericError x)));
+              case (#Ok) break travelling;
+            };
+          } catch ee #Create(actor (Principal.toText(cnstr_id)));
+        };
+        case (#Create cnstr) {
+          let cnstr_id = Principal.fromActor(cnstr);
+          try {
+            let slave = switch (await* createArchive(?cnstr_id)) {
+              case (#Err err) return reunlock(#Err(#Async(err)));
+              case (#Ok created) created;
+            };
+            switch (await cnstr.rb_archive_create(slave)) {
+              case (#Err(#InvalidDestination r)) r;
+              case (#Err(#GenericError x)) return reunlock(#Err(#Async(#GenericError x)));
+              case (#Ok new_root) {
+                meta := Value.setPrincipal(meta, A.ROOT, ?new_root);
+                meta := Value.setPrincipal(meta, A.STANDBY, null);
+                #Add(actor (Principal.toText(slave)));
+              };
+            };
+          } catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+        };
+      };
+    };
+    for (b in batch.vals()) blocks := RBTree.delete(blocks, Nat.compare, b.id);
+    #Ok;
+  };
+
+  func createArchive(master : ?Principal) : async* Result.Type<Principal, Error.Generic> {
+    switch (Value.metaPrincipal(meta, A.STANDBY)) {
+      case (?standby) return try switch (await (actor (Principal.toText(standby)) : Archive.Canister).rb_archive_initialize(master)) {
+        case (#Err err) #Err err;
+        case _ #Ok standby;
+      } catch e #Err(Error.convert(e));
+      case _ ();
+    };
+    var archive_tcycles = Value.getNat(meta, A.MIN_TCYCLES, 0);
+    if (archive_tcycles < 3) archive_tcycles := 3;
+    if (archive_tcycles > 10) archive_tcycles := 10;
+    meta := Value.setNat(meta, A.MIN_TCYCLES, ?archive_tcycles);
+
+    let trillion = 10 ** 12;
+    let cost = archive_tcycles * trillion;
+    let reserve = 2 * trillion;
+    if (Cycles.balance() < cost + reserve) return Error.text("Insufficient cycles balance to create a new archive");
+
+    try {
+      let new_canister = await (with cycles = cost) Archive.Canister(master);
+      #Ok(Principal.fromActor(new_canister));
+    } catch e #Err(Error.convert(e));
+  };
+
   func rebuild(msg : Text) : Error.Result {
     prev_build := null;
     Error.text("Rebuilding: " # msg);
   };
-  func run(caller : Principal, sub : Blob) : async* B.RunRes {
-    let env = switch (await* Book.getEnvironment(meta)) {
-      case (#Err err) return #Err err;
-      case (#Ok ok) ok;
-    };
-    meta := env.meta;
+  func match(caller : Principal, sub : Blob, env : B.Environment, _round : Nat, max_round : Nat) : async* B.RunRes {
     let fee_collector = getFeeCollector();
     var start_sell_lvl = true;
     var start_buy_lvl = true;
@@ -582,22 +825,23 @@ shared (install) persistent actor class Canister(
     var buy_p = 0;
     var sell_lvl = Book.getLevel(RBTree.empty(), 0);
     var buy_lvl = Book.getLevel(RBTree.empty(), 0);
-    label pricing while true {
+    var round = _round;
+    label pricing while (round <= max_round) {
       if (start_sell_lvl) switch (RBTree.min(sell_book)) {
         case (?(p, lvl)) {
           sell_p := p;
           sell_lvl := lvl;
           start_sell_lvl := false;
         };
-        case _ return await* trim(caller, sub, env);
+        case _ return Error.text("Sell book is empty");
       } else if (next_sell_lvl) switch (RBTree.right(sell_book, Nat.compare, sell_p + 1)) {
         case (?(p, lvl)) {
           sell_p := p;
           sell_lvl := lvl;
           next_sell_lvl := false;
         };
-        case _ return await* trim(caller, sub, env);
-      } else ();
+        case _ return Error.text("Reached the end of sell book");
+      };
 
       if (start_buy_lvl) switch (RBTree.max(buy_book)) {
         case (?(p, lvl)) {
@@ -605,7 +849,7 @@ shared (install) persistent actor class Canister(
           buy_lvl := lvl;
           start_buy_lvl := false;
         };
-        case _ return await* trim(caller, sub, env);
+        case _ return Error.text("Buy book is empty");
       } else if (next_buy_lvl) {
         if (buy_p > 0) switch (RBTree.left(buy_book, Nat.compare, buy_p - 1)) {
           case (?(p, lvl)) {
@@ -613,9 +857,9 @@ shared (install) persistent actor class Canister(
             buy_lvl := lvl;
             next_buy_lvl := false;
           };
-          case _ return await* trim(caller, sub, env);
-        } else return await* trim(caller, sub, env);
-      } else ();
+          case _ return Error.text("Reached the end of buy book");
+        } else return Error.text("Reached the bottom of buy book");
+      };
 
       var start_sell_o = true;
       var start_buy_o = true;
@@ -623,21 +867,9 @@ shared (install) persistent actor class Canister(
       var next_buy_o = true;
       var sell_id = 0;
       var buy_id = 0;
-      var sell_o : B.Order = {
-        created_at = env.now;
-        execute = 0;
-        block = 0;
-        owner = Principal.fromActor(Self);
-        sub = Subaccount.get(null);
-        is_buy = false;
-        price = 0;
-        base = Book.newAmount(0);
-        expires_at = 0;
-        trades = RBTree.empty();
-        closed = null;
-      };
+      var sell_o = Book.defaultOrder(Principal.fromActor(Self), Subaccount.get(null), false, env.now);
       var buy_o = { sell_o with is_buy = true };
-      label timing while true {
+      label timing while (round <= max_round) {
         if (start_sell_o) switch (RBTree.minKey(sell_lvl.orders)) {
           case (?id) {
             sell_id := id;
@@ -711,6 +943,7 @@ shared (install) persistent actor class Canister(
             continue pricing;
           };
         };
+        round += 1;
 
         if (sell_id == buy_id) return rebuild("sell id (" # debug_show sell_id # ") is equal to buy id");
         if (sell_o.is_buy) return rebuild("buy order (" # debug_show sell_id # ") is on sell book");
@@ -823,7 +1056,7 @@ shared (install) persistent actor class Canister(
           if (sell_maker) next_sell_o := true else next_buy_o := true;
           continue timing;
         };
-        if (sell_o.price > buy_o.price) return await* trim(caller, sub, env);
+        if (sell_o.price > buy_o.price) return Error.text("No matching needed");
         let maker_p = if (sell_maker) sell_o.price else buy_o.price;
         let (min_base, min_quote, min_side) = if (sell_unfilled < buy_unfilled) (sell_unfilled, sell_unfilled * maker_p, false) else (buy_unfilled, buy_unfilled * maker_p, true);
         if (min_quote < env.min_quote_amount) {
@@ -953,13 +1186,11 @@ shared (install) persistent actor class Canister(
         buy_sub := Book.subaccFillQuote(buy_sub, amt_q);
         saveMatch();
         // todo: blockify
-
-        // if (not next_sell_o and not next_buy_o)
+        // todo: return block
       };
-      if (not next_sell_lvl and not next_buy_lvl) return await* trim(caller, sub, env); // after everything, must be one next
+      if (not next_sell_lvl and not next_buy_lvl) break pricing; // there must be one next to continue matching
     };
-
-    Error.text("No job available");
+    Error.text("No matching available");
   };
 
   func refundClose(caller : Principal, sub : Blob, env : B.Environment, reason : { #Expired : Null; #AlmostFilled : Null }, oid : Nat, _o : B.Order, unfilled : Nat, _lvl : B.Price, unfilled_q : Nat) : async* B.RunRes {
@@ -1042,7 +1273,7 @@ shared (install) persistent actor class Canister(
     let exec_id = switch execute_res {
       case (#Err err) {
         reunlock(null);
-        return Error.text("Exec failed");
+        return #Err(#CloseFailed { order = oid; instruction_blocks = [[instruction]]; error = err });
       };
       case (#Ok ok) ok[0];
     };
@@ -1050,108 +1281,4 @@ shared (install) persistent actor class Canister(
     // todo: blockify
     Error.text("Pepee");
   };
-
-  func trim(caller : Principal, sub : Blob, env : B.Environment) : async* B.RunRes {
-    var round = 0;
-    let max_round = 100;
-    label trimming while (round <= max_round) {
-      let (exp_t, exp_ids) = switch (RBTree.min(orders_by_expiry)) {
-        case (?found) found;
-        case _ break trimming;
-      };
-      while (round <= max_round) {
-        round += 1;
-        let id = switch (RBTree.minKey(exp_ids)) {
-          case (?min) min;
-          case _ {
-            orders_by_expiry := RBTree.delete(orders_by_expiry, Nat64.compare, exp_t);
-            continue trimming;
-          };
-        };
-        var o = switch (RBTree.get(orders, Nat.compare, id)) {
-          case (?found) found;
-          case _ {
-            let missing_o = RBTree.delete(exp_ids, Nat.compare, id);
-            orders_by_expiry := Book.saveExpiries(orders_by_expiry, exp_t, missing_o);
-            continue trimming;
-          };
-        };
-        let is_open = switch (o.closed) {
-          case (?cl) if (Book.isClosing(cl.reason)) break trimming else false;
-          case _ true;
-        };
-        if (is_open) {
-          if (o.base.locked > 0) break trimming;
-          if (o.base.filled >= o.base.initial) {
-            let closed = ?{ caller; sub; reason = #FullyFilled; at = env.now };
-            o := { o with closed };
-            orders := RBTree.insert(orders, Nat.compare, id, o);
-
-            var user = getUser(o.owner);
-            var subacc = Book.getSubaccount(user, o.sub);
-            if (o.is_buy) {
-              var lvl = Book.getLevel(buy_book, o.price);
-              lvl := Book.levelDecAmount(lvl, o.base);
-              lvl := Book.levelDelOrder(lvl, id);
-              buy_book := Book.saveLevel(buy_book, o.price, lvl);
-
-              base := Book.decAmount(base, o.base);
-              subacc := Book.subaccDecBase(subacc, o.base);
-            } else {
-              var lvl = Book.getLevel(sell_book, o.price);
-              lvl := Book.levelDecAmount(lvl, o.base);
-              lvl := Book.levelDelOrder(lvl, id);
-              sell_book := Book.saveLevel(sell_book, o.price, lvl);
-
-              let o_quote = Book.mulAmount(o.base, o.price);
-              quote := Book.decAmount(base, o_quote);
-              subacc := Book.subaccDecQuote(subacc, o_quote);
-            };
-            user := Book.saveSubaccount(user, o.sub, subacc);
-            user := saveUser(o.owner, user);
-
-            orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, id);
-            orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expires_at + env.ttl, id);
-
-            continue trimming;
-          };
-          let unfilled = o.base.initial - o.base.filled;
-          let unfilled_q = unfilled * o.price;
-          var lvl = if (o.is_buy) Book.getLevel(buy_book, o.price) else Book.getLevel(sell_book, o.price);
-          if (o.expires_at < env.now) return await* refundClose(caller, sub, env, #Expired null, id, o, unfilled, lvl, unfilled_q);
-          if (unfilled < env.min_base_amount or unfilled_q < env.min_quote_amount) return await* refundClose(caller, sub, env, #AlmostFilled null, id, o, unfilled, lvl, unfilled_q);
-        } else {
-          if (o.expires_at < exp_t and exp_t < env.now) {
-            orders := RBTree.delete(orders, Nat.compare, id);
-            var user = getUser(o.owner);
-            var subacc = Book.getSubaccount(user, o.sub);
-            subacc := Book.subaccDelOrder(subacc, id);
-            user := Book.saveSubaccount(user, o.sub, subacc);
-            user := saveUser(o.owner, user);
-            continue trimming; // delete from ttl
-          } else {
-            orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, id);
-            orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expires_at + env.ttl, id);
-          };
-        };
-        break trimming;
-      };
-    };
-    label trimming while (round <= max_round) {
-      let (id, tr) = switch (RBTree.min(trades)) {
-        case (?min) min;
-        case _ break trimming;
-      };
-      round += 1;
-      switch (RBTree.get(orders, Nat.compare, tr.sell.id), RBTree.get(orders, Nat.compare, tr.buy.id)) {
-        case (null, null) trades := RBTree.delete(trades, Nat.compare, id);
-        case _ break trimming;
-      };
-    };
-    // label archiving while (round <= max_round) {
-    //   // todo: finish this
-    // };
-    Error.text("No job available");
-  };
-
 };

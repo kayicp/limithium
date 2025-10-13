@@ -15,6 +15,7 @@ module {
   public let MIN_APPROVAL_EXPIRY = "icrc1:min_approval_expiry";
   public let DEFAULT_APPROVAL_EXPIRY = "icrc1:default_approval_expiry";
   public let VAULT = "lmtm:vault";
+  public let MAX_UPDATE_BATCH = "lmtm:max_update_batch_size";
   public let MAX_MINT = "lmtm:max_mint_per_round";
 
   public type Account = { owner : Principal; subaccount : ?Blob };
@@ -123,6 +124,7 @@ module {
 
   public type Enqueue = { account : Account; rounds : Nat };
   public type EnqueueErrors = {
+    #BatchTooLarge : { batch_size : Nat; maximum_batch_size : Nat };
     #GenericError : Error.Type;
   };
 };

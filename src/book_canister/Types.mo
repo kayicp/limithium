@@ -185,7 +185,6 @@ module {
       instruction_blocks : [[V.Instruction]];
       error : V.ExecuteErr;
     };
-    #MatchFailed;
   };
   public type RunRes = Result.Type<Nat, RunErr>;
 
@@ -219,9 +218,6 @@ module {
     val : Value.Type;
     valh : Blob;
     idh : Blob;
-    locked : ?{
-      caller : Principal;
-      at : Nat64;
-    };
+    locked : Bool;
   };
 };

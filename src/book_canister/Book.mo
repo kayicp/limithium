@@ -64,17 +64,12 @@ module {
     a with filled = a.filled + b
   };
   public func newOrder(execute : Nat, block : Nat, now : Nat64, { owner : Principal; sub : Blob; is_buy : Bool; price : Nat; amount : Nat; expires_at : Nat64 }) : B.Order = {
-    created_at = now;
+    defaultOrder(owner, sub, is_buy, now) with
     execute;
     block;
-    owner;
-    sub;
-    is_buy;
     price;
     base = newAmount(amount);
     expires_at;
-    trades = RBTree.empty();
-    closed = null;
   };
   public func isClosing(c : B.CloseReason) : Bool = switch c {
     case (#AlmostFilled null or #Expired null or #Canceled null) true;
@@ -172,6 +167,19 @@ module {
   };
   public func unlockOrder(o : B.Order, amount : Nat) : B.Order = {
     o with base = unlockAmount(o.base, amount)
+  };
+  public func defaultOrder(owner : Principal, sub : Blob, is_buy : Bool, created_at : Nat64) : B.Order = {
+    created_at;
+    execute = 0;
+    block = 0;
+    owner;
+    sub;
+    is_buy;
+    price = 0;
+    base = newAmount(0);
+    expires_at = 0;
+    trades = RBTree.empty();
+    closed = null;
   };
 
   public func getExpiries(e : B.Expiries, t : Nat64) : B.Nats = switch (RBTree.get(e, Nat64.compare, t)) {
