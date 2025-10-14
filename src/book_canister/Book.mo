@@ -4,14 +4,18 @@ import Order "mo:base/Order";
 import Nat "mo:base/Nat";
 import Nat64 "mo:base/Nat64";
 import Blob "mo:base/Blob";
+import Bool "mo:base/Bool";
 import Nat8 "mo:base/Nat8";
+import Iter "mo:base/Iter";
 import Principal "mo:base/Principal";
 import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import Value "../util/motoko/Value";
 import ICRC1 "../icrc1_canister/main";
 import Time64 "../util/motoko/Time64";
+import Option "../util/motoko/Option";
 import Vault "../vault_canister/main";
+import Subaccount "../util/motoko/Subaccount";
 
 module {
   public func newAmount(initial : Nat) : B.Amount = {
@@ -32,7 +36,64 @@ module {
   public func saveSubaccount(u : B.User, subacc_id : Blob, subacc : B.Subaccount) : B.User = ({
     u with subaccs = RBTree.insert(u.subaccs, Blob.compare, subacc_id, subacc)
   });
-  public func dedupePlace(a : (Principal, B.PlaceArg), b : (Principal, B.PlaceArg)) : Order.Order = #equal; // todo: finish, start with time
+  public func dedupePlace(_a : (Principal, B.PlaceArg), _b : (Principal, B.PlaceArg)) : Order.Order {
+    let (ap, a) = _a;
+    let (bp, b) = _b;
+    switch (Option.compare(a.created_at, b.created_at, Nat64.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.memo, b.memo, Blob.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Principal.compare(ap, bp)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Blob.compare(Subaccount.get(a.subaccount), Subaccount.get(b.subaccount))) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (a.fee, b.fee) {
+      case (?af, ?bf) {
+        switch (Nat.compare(af.base, bf.base)) {
+          case (#equal) ();
+          case other return other;
+        };
+        switch (Nat.compare(af.quote, bf.quote)) {
+          case (#equal) ();
+          case other return other;
+        };
+      };
+      case (?af, null) return #greater;
+      case (null, ?bf) return #less;
+      case (null, null) ();
+    };
+    switch (Nat.compare(a.orders.size(), b.orders.size())) {
+      case (#equal) ();
+      case other return other;
+    };
+    if (a.orders.size() > 0) for (i in Iter.range(0, a.orders.size() - 1)) {
+      let ao = a.orders[i];
+      let bo = b.orders[i];
+
+      switch (Nat.compare(ao.price, bo.price)) {
+        case (#equal) ();
+        case other return other;
+      };
+      switch (Nat.compare(ao.amount, bo.amount)) {
+        case (#equal) ();
+        case other return other;
+      };
+      switch (Option.compare(ao.expires_at, bo.expires_at, Nat64.compare)) {
+        case (#equal) ();
+        case other return other;
+      };
+      return Bool.compare(ao.is_buy, bo.is_buy);
+    };
+    #equal;
+  };
 
   public func nearTick(n : Nat, tick : Nat) : Nat {
     let lower = (n / tick) * tick;
@@ -181,12 +242,10 @@ module {
     trades = RBTree.empty();
     closed = null;
   };
-
   public func getExpiries(e : B.Expiries, t : Nat64) : B.Nats = switch (RBTree.get(e, Nat64.compare, t)) {
     case (?found) found;
     case _ RBTree.empty();
   };
-
   public func saveExpiries(e : B.Expiries, t : Nat64, ids : B.Nats) : B.Expiries = if (RBTree.size(ids) > 0) {
     RBTree.insert(e, Nat64.compare, t, ids);
   } else RBTree.delete(e, Nat64.compare, t);
@@ -196,13 +255,42 @@ module {
     expiries := RBTree.insert(expiries, Nat.compare, id, ());
     saveExpiries(exps, t, expiries);
   };
-
   public func delExpiry(exps : B.Expiries, t : Nat64, id : Nat) : B.Expiries {
     var expiries = getExpiries(exps, t);
     expiries := RBTree.delete(expiries, Nat.compare, id);
     saveExpiries(exps, t, expiries);
   };
-
+  public func valueOpens(owner : Principal, sub : Blob, memo : ?Blob, created_at : ?Nat64, now : Nat64, orders : [Value.Type], phash : ?Blob) : Value.Type {
+    let subaccount = if (sub.size() > 0) ?sub else null;
+    var tx = RBTree.empty<Text, Value.Type>();
+    tx := Value.setAccountP(tx, "acc", ?{ owner; subaccount });
+    tx := Value.setBlob(tx, "memo", memo);
+    tx := Value.setArray(tx, "orders", orders);
+    switch created_at {
+      case (?t) tx := Value.setNat(tx, "ts", ?Nat64.toNat(t));
+      case _ ();
+    };
+    var map = RBTree.empty<Text, Value.Type>();
+    map := Value.setNat(map, "ts", ?Nat64.toNat(now));
+    map := Value.setText(map, "op", ?"open");
+    map := Value.setMap(map, "tx", tx);
+    map := Value.setBlob(map, "phash", phash);
+    #Map(RBTree.array(map));
+  };
+  public func valueOpen(order_id : Nat, { price; is_buy; base; expires_at; execute } : B.Order) : Value.Type {
+    var map = RBTree.empty<Text, Value.Type>();
+    map := Value.setNat(map, "id", ?order_id);
+    map := Value.setNat(map, "price", ?price);
+    map := Value.setText(map, "side", if (is_buy) ?"buy" else ?"sell");
+    map := Value.setNat(map, "amt", ?base.initial);
+    map := Value.setNat(map, "expires_at", ?Nat64.toNat(expires_at));
+    map := Value.setNat(map, "exec", ?execute);
+    #Map(RBTree.array(map));
+  };
+  public func getPhash(blocks : RBTree.Type<Nat, B.Block>) : (Nat, ?Blob) = switch (RBTree.max(blocks)) {
+    case (?(id, found)) (id, ?found.valh);
+    case _ (0, null);
+  };
   public func getEnvironment(_meta : Value.Metadata) : async* Result.Type<B.Environment, Error.Generic> {
     var meta = _meta;
     let vault = switch (Value.metaPrincipal(meta, B.VAULT)) {

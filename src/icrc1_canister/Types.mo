@@ -44,7 +44,7 @@ module {
     fee : ?Nat;
     memo : ?Blob;
     from_subaccount : ?Blob;
-    created_at_time : ?Nat64;
+    created_at : ?Nat64;
     amount : Nat;
   };
 
@@ -54,7 +54,7 @@ module {
     spender_subaccount : ?Blob;
     from : Account;
     memo : ?Blob;
-    created_at_time : ?Nat64;
+    created_at : ?Nat64;
     amount : Nat;
   };
 
@@ -74,7 +74,7 @@ module {
     fee : ?Nat;
     memo : ?Blob;
     from_subaccount : ?Blob;
-    created_at_time : ?Nat64;
+    created_at : ?Nat64;
     amount : Nat;
     expected_allowance : ?Nat;
     expires_at : ?Nat64;

@@ -66,7 +66,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    switch (checkIdempotency(caller, #Transfer arg, env.now, arg.created_at_time)) {
+    switch (checkIdempotency(caller, #Transfer arg, env.now, arg.created_at)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -141,7 +141,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    switch (checkIdempotency(caller, #Approve arg, env.now, arg.created_at_time)) {
+    switch (checkIdempotency(caller, #Approve arg, env.now, arg.created_at)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -196,7 +196,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    switch (checkIdempotency(caller, #TransferFrom arg, env.now, arg.created_at_time)) {
+    switch (checkIdempotency(caller, #TransferFrom arg, env.now, arg.created_at)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -353,7 +353,7 @@ shared (install) persistent actor class Canister(
     };
     case _ #Ok;
   };
-  func checkIdempotency(caller : Principal, opr : I.ArgType, now : Nat64, created_at_time : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
+  func checkIdempotency(caller : Principal, opr : I.ArgType, now : Nat64, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
     var tx_window = Nat64.fromNat(Value.getNat(meta, I.TX_WINDOW, 0));
     let min_tx_window = Time64.MINUTES(15);
     if (tx_window < min_tx_window) {
@@ -366,7 +366,7 @@ shared (install) persistent actor class Canister(
       permitted_drift := min_permitted_drift;
       meta := Value.setNat(meta, I.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
     };
-    switch (created_at_time) {
+    switch (created_at) {
       case (?created_time) {
         let start_time = now - tx_window - permitted_drift;
         if (created_time < start_time) return #Err(#TooOld);

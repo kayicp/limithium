@@ -60,7 +60,7 @@ shared (install) persistent actor class Canister(
     if (approval.allowance < xfer_and_fee) return #Err(#InsufficientAllowance approval);
 
     let now = Time64.nanos();
-    switch (checkIdempotency(caller, #Deposit arg, now, arg.created_at_time)) {
+    switch (checkIdempotency(caller, #Deposit arg, now, arg.created_at)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -71,7 +71,7 @@ shared (install) persistent actor class Canister(
       fee = ?fee;
       amount = xfer_amount;
       memo = null;
-      created_at_time = null;
+      created_at = null;
     };
     let xfer_id = switch (await token_canister.icrc2_transfer_from(xfer_arg)) {
       case (#Ok ok) ok;
@@ -122,7 +122,7 @@ shared (install) persistent actor class Canister(
       case _ ();
     };
     let now = Time64.nanos();
-    switch (checkIdempotency(caller, #Withdraw arg, now, arg.created_at_time)) {
+    switch (checkIdempotency(caller, #Withdraw arg, now, arg.created_at)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -137,7 +137,7 @@ shared (install) persistent actor class Canister(
       fee = ?xfer_fee;
       memo = null;
       from_subaccount = null;
-      created_at_time = null;
+      created_at = null;
     };
     let xfer_res = await token_canister.icrc1_transfer(xfer_arg);
     user := Vault.getUser(users, caller);
@@ -259,7 +259,7 @@ shared (install) persistent actor class Canister(
     };
     case _ #Ok;
   };
-  func checkIdempotency(caller : Principal, opr : V.ArgType, now : Nat64, created_at_time : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
+  func checkIdempotency(caller : Principal, opr : V.ArgType, now : Nat64, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
     var tx_window = Nat64.fromNat(Value.getNat(meta, V.TX_WINDOW, 0));
     let min_tx_window = Time64.MINUTES(15);
     if (tx_window < min_tx_window) {
@@ -272,7 +272,7 @@ shared (install) persistent actor class Canister(
       permitted_drift := min_permitted_drift;
       meta := Value.setNat(meta, V.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
     };
-    switch (created_at_time) {
+    switch (created_at) {
       case (?created_time) {
         let start_time = now - tx_window - permitted_drift;
         if (created_time < start_time) return #Err(#TooOld);

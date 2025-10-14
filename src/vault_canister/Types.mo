@@ -20,7 +20,7 @@ module {
     amount : Nat;
     fee : ?Nat;
     memo : ?Blob;
-    created_at_time : ?Nat64;
+    created_at : ?Nat64;
   };
   public type DepositErr = {
     #GenericError : Error.Type;

@@ -121,7 +121,7 @@ module {
     orders : [OrderArg];
     fee : ?Fee;
     memo : ?Blob;
-    created_at_time : ?Nat64;
+    created_at : ?Nat64;
   };
   public type PlaceErr = {
     #GenericError : Error.Type;
@@ -209,10 +209,6 @@ module {
     ttl : Nat64;
   };
 
-  public type ArgType = {
-    #Place : PlaceArg;
-    // #Cancel : ();
-  };
   public type PlaceDedupes = RBTree.Type<(Principal, PlaceArg), Nat>;
 
   public type Block = {

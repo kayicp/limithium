@@ -55,12 +55,11 @@ shared (install) persistent actor class Canister(
 
   var place_dedupes : B.PlaceDedupes = RBTree.empty();
 
-  var block_id = 0;
   var blocks = RBTree.empty<Nat, B.Block>();
 
   var reward_id = 0;
   var rewards = RBTree.empty<Nat, (ICRC1T.Enqueue, locked : Bool)>();
-
+  var prev_build = null : ?Nat;
   // public shared query func book_base_balances_of() : async [Nat] {
   //   []
   // };
@@ -71,7 +70,8 @@ shared (install) persistent actor class Canister(
 
   public shared ({ caller }) func book_open(arg : B.PlaceArg) : async B.PlaceRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
-    if (prev_build != RBTree.maxKey(orders)) return Error.text("Orderbook needs rebuilding. Please call `book_run`");
+    let max_oid = RBTree.maxKey(orders);
+    if (max_oid != null and max_oid != prev_build) return Error.text("Orderbook needs rebuilding. Please call `book_run`");
 
     let user_acc = { owner = caller; subaccount = arg.subaccount };
     if (not ICRC1L.validateAccount(user_acc)) return Error.text("Caller account is not valid");
@@ -166,7 +166,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    switch (checkIdempotency(caller, #Place arg, env.now, arg.created_at_time)) {
+    switch (checkIdempotency(caller, arg, env.now, arg.created_at)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -179,9 +179,14 @@ shared (install) persistent actor class Canister(
     subacc := Book.getSubaccount(user, sub);
     base := Book.incAmount(base, Book.newAmount(lbase));
     quote := Book.incAmount(quote, Book.newAmount(lquote));
+    let oids = Buffer.Buffer<Nat>(arg.orders.size());
+    let ovalues = Buffer.Buffer<Value.Type>(arg.orders.size());
+    let (block_id, phash) = Book.getPhash(blocks);
     func newOrder(o : { index : Nat; expiry : Nat64 }) : B.Order {
       let new_order = Book.newOrder(exec_ids[o.index], block_id, env.now, { arg.orders[o.index] with owner = caller; sub; expires_at = o.expiry });
       orders := RBTree.insert(orders, Nat.compare, order_id, new_order);
+      oids.add(order_id);
+      ovalues.add(Book.valueOpen(order_id, new_order));
       subacc := Book.subaccNewOrder(subacc, order_id);
 
       orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expiry, order_id);
@@ -210,14 +215,17 @@ shared (install) persistent actor class Canister(
     user := Book.saveSubaccount(user, sub, subacc);
     user := saveUser(caller, user);
 
-    // todo: blockify
-    // todo: save dedupe
-    #Ok([]);
+    if (arg.created_at != null) place_dedupes := RBTree.insert(place_dedupes, Book.dedupePlace, (caller, arg), block_id);
+
+    let val = Book.valueOpens(caller, sub, arg.memo, arg.created_at, env.now, Buffer.toArray(ovalues), phash);
+    newBlock(block_id, val);
+    #Ok(Buffer.toArray(oids));
   };
 
   public shared ({ caller }) func book_close(arg : B.CancelArg) : async B.CancelRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
-    if (prev_build != RBTree.maxKey(orders)) return Error.text("Orderbook needs rebuilding. Please call `book_run`");
+    let max_oid = RBTree.maxKey(orders);
+    if (max_oid != null and max_oid != prev_build) return Error.text("Orderbook needs rebuilding. Please call `book_run`");
 
     let user_acc = { owner = caller; subaccount = arg.subaccount };
     if (not ICRC1L.validateAccount(user_acc)) return Error.text("Caller account is not valid");
@@ -472,7 +480,7 @@ shared (install) persistent actor class Canister(
     };
     case _ #Ok;
   };
-  func checkIdempotency(caller : Principal, opr : B.ArgType, now : Nat64, created_at_time : ?Nat64) : Result.Type<(), { #CreatedInFuture : { vault_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
+  func checkIdempotency(caller : Principal, arg : B.PlaceArg, now : Nat64, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { vault_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
     var tx_window = Nat64.fromNat(Value.getNat(meta, B.TX_WINDOW, 0));
     let min_tx_window = Time64.MINUTES(15);
     if (tx_window < min_tx_window) {
@@ -485,16 +493,13 @@ shared (install) persistent actor class Canister(
       permitted_drift := min_permitted_drift;
       meta := Value.setNat(meta, B.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
     };
-    switch (created_at_time) {
+    switch (created_at) {
       case (?created_time) {
         let start_time = now - tx_window - permitted_drift;
         if (created_time < start_time) return #Err(#TooOld);
         let end_time = now + permitted_drift;
         if (created_time > end_time) return #Err(#CreatedInFuture { vault_time = now });
-        let (map, comparer, arg) = switch opr {
-          case (#Place place) (place_dedupes, Book.dedupePlace, place);
-        };
-        switch (RBTree.get(map, comparer, (caller, arg))) {
+        switch (RBTree.get(place_dedupes, Book.dedupePlace, (caller, arg))) {
           case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
           case _ #Ok;
         };
@@ -503,7 +508,6 @@ shared (install) persistent actor class Canister(
     };
   };
 
-  var prev_build = null : ?Nat;
   public shared ({ caller }) func book_run(arg : B.RunArg) : async B.RunRes {
     if (not Value.getBool(meta, B.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acc = { owner = caller; subaccount = arg.subaccount };
@@ -542,7 +546,6 @@ shared (install) persistent actor class Canister(
     };
   };
 
-  // todo: if build mode is on, pause open/close/run order
   func build() : B.RunRes {
     let res = Buffer.Buffer<Nat>(100);
     label building for (i in Iter.range(0, 100 - 1)) {
@@ -721,17 +724,15 @@ shared (install) persistent actor class Canister(
     await* match(caller, sub, env, round, max_round);
   };
 
-  func newBlock(id : Nat, val : Value.Type) : async* Nat {
-    block_id += 1;
+  func newBlock(block_id : Nat, val : Value.Type) {
     let valh = Value.hash(val);
-    let idh = Blob.fromArray(LEB128.toUnsignedBytes(id));
-    blocks := RBTree.insert(blocks, Nat.compare, id, { val; valh; idh; locked = false });
+    let idh = Blob.fromArray(LEB128.toUnsignedBytes(block_id));
+    blocks := RBTree.insert(blocks, Nat.compare, block_id, { val; valh; idh; locked = false });
 
     tip_cert := MerkleTree.empty();
     tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_INDEX)], idh);
     tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_HASH)], valh);
     updateTipCert();
-    id;
   };
 
   func sendBlock() : async* Result.Type<(), { #Sync : Error.Generic; #Async : Error.Generic }> {
