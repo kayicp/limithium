@@ -277,6 +277,19 @@ module {
     map := Value.setBlob(map, "phash", phash);
     #Map(RBTree.array(map));
   };
+  public func valueCloses(owner : Principal, sub : Blob, memo : ?Blob, now : Nat64, orders : [Value.Type], phash : ?Blob) : Value.Type {
+    let subaccount = if (sub.size() > 0) ?sub else null;
+    var tx = RBTree.empty<Text, Value.Type>();
+    tx := Value.setAccountP(tx, "acc", ?{ owner; subaccount });
+    tx := Value.setBlob(tx, "memo", memo);
+    tx := Value.setArray(tx, "orders", orders);
+    var map = RBTree.empty<Text, Value.Type>();
+    map := Value.setNat(map, "ts", ?Nat64.toNat(now));
+    map := Value.setText(map, "op", ?"close");
+    map := Value.setMap(map, "tx", tx);
+    map := Value.setBlob(map, "phash", phash);
+    #Map(RBTree.array(map));
+  };
   public func valueOpen(order_id : Nat, { price; is_buy; base; expires_at; execute } : B.Order) : Value.Type {
     var map = RBTree.empty<Text, Value.Type>();
     map := Value.setNat(map, "id", ?order_id);
@@ -287,10 +300,19 @@ module {
     map := Value.setNat(map, "exec", ?execute);
     #Map(RBTree.array(map));
   };
+  public func valueClose(order_id : Nat, unlock_key : Text, unlock_amt : Nat, fee : Nat, execute : Nat) : Value.Type {
+    var map = RBTree.empty<Text, Value.Type>();
+    map := Value.setNat(map, "id", ?order_id);
+    map := Value.setNat(map, unlock_key, ?unlock_amt);
+    if (fee > 0) map := Value.setNat(map, "fee", ?fee);
+    map := Value.setNat(map, "exec", ?execute);
+    #Map(RBTree.array(map));
+  };
   public func getPhash(blocks : RBTree.Type<Nat, B.Block>) : (Nat, ?Blob) = switch (RBTree.max(blocks)) {
-    case (?(id, found)) (id, ?found.valh);
+    case (?(id, found)) (id + 1, ?found.valh);
     case _ (0, null);
   };
+
   public func getEnvironment(_meta : Value.Metadata) : async* Result.Type<B.Environment, Error.Generic> {
     var meta = _meta;
     let vault = switch (Value.metaPrincipal(meta, B.VAULT)) {
