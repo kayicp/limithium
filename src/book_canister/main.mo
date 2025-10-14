@@ -7,6 +7,7 @@ import ArchiveL "../archive_canister/Archive";
 
 import ICRC1T "../icrc1_canister/Types";
 import ICRC1L "../icrc1_canister/ICRC1";
+import RewardToken "../icrc1_canister/main";
 import ICRC3T "../util/motoko/ICRC-3/Types";
 import Value "../util/motoko/Value";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
@@ -686,6 +687,32 @@ shared (install) persistent actor class Canister(
         case _ break trimming;
       };
     };
+    label trimming while (round <= max_round and RBTree.size(rewards) > 0) {
+      let reward_token_id = switch (Value.metaPrincipal(meta, B.REWARD_TOKEN)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      let reward_token = actor (Principal.toText(reward_token_id)) : RewardToken.Canister;
+      let max_batch = switch (await reward_token.lmtm_max_update_batch_size()) {
+        case (?found) Nat.max(1, found);
+        case _ 1;
+      };
+      var locks = RBTree.empty<Nat, ICRC1T.Enqueue>();
+      round += 1;
+      let buff = Buffer.Buffer<ICRC1T.Enqueue>(max_batch);
+      label collecting for ((r_id, (r, locked)) in RBTree.entries(rewards)) {
+        if (locked) break trimming;
+        buff.add(r);
+        locks := RBTree.insert(locks, Nat.compare, r_id, r);
+        if (RBTree.size(locks) >= max_batch) break collecting;
+      };
+      for ((r_id, r) in RBTree.entries(locks)) rewards := RBTree.insert(rewards, Nat.compare, r_id, (r, true));
+      switch (await reward_token.lmtm_enqueue_minting_rounds(Buffer.toArray(buff))) {
+        case (#Err err) for ((r_id, r) in RBTree.entries(locks)) rewards := RBTree.insert(rewards, Nat.compare, r_id, (r, false));
+        case (#Ok) for ((r_id, r) in RBTree.entries(locks)) rewards := RBTree.delete(rewards, Nat.compare, r_id);
+      };
+      return Error.text("No work available");
+    };
     if (round <= max_round) switch (await* sendBlock()) {
       case (#Ok) return Error.text("No job available");
       case (#Err(#Async err)) return #Err(err);
@@ -704,7 +731,6 @@ shared (install) persistent actor class Canister(
     tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_INDEX)], idh);
     tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_HASH)], valh);
     updateTipCert();
-
     id;
   };
 
@@ -1016,6 +1042,10 @@ shared (install) persistent actor class Canister(
           subacc := Book.subaccDecBase(subacc, sell_o.base);
           user := Book.saveSubaccount(user, sell_o.sub, subacc);
           user := saveUser(sell_o.owner, user);
+
+          orders_by_expiry := Book.delExpiry(orders_by_expiry, sell_o.expires_at, sell_id);
+          orders_by_expiry := Book.newExpiry(orders_by_expiry, sell_o.expires_at + env.ttl, sell_id);
+
           next_sell_o := true;
           continue timing;
         };
@@ -1037,7 +1067,8 @@ shared (install) persistent actor class Canister(
           user := Book.saveSubaccount(user, buy_o.sub, subacc);
           user := saveUser(buy_o.owner, user);
 
-          // todo: add to expiry
+          orders_by_expiry := Book.delExpiry(orders_by_expiry, buy_o.expires_at, buy_id);
+          orders_by_expiry := Book.newExpiry(orders_by_expiry, buy_o.expires_at + env.ttl, buy_id);
 
           next_buy_o := true;
           continue timing;
@@ -1179,18 +1210,27 @@ shared (install) persistent actor class Canister(
         trade_id += 1;
 
         base := Book.fillAmount(base, amt);
-        quote := Book.fillAmount(quote, amt_q);
+        quote := Book.fillAmount(quote, amt_q); // todo: dont fill by maker price, use buy price
         sell_lvl := Book.levelFill(sell_lvl, amt);
         buy_lvl := Book.levelFill(buy_lvl, amt);
         sell_sub := Book.subaccFillBase(sell_sub, amt);
         buy_sub := Book.subaccFillQuote(buy_sub, amt_q);
         saveMatch();
+
+        let maker_reward = Nat.max(amt_q / env.min_quote_amount, 1);
+        if (sell_maker) newReward(sell_o.owner, sell_s, maker_reward) else newReward(buy_o.owner, buy_s, maker_reward);
+        newReward(caller, Subaccount.opt(sub), 1);
         // todo: blockify
         // todo: return block
       };
       if (not next_sell_lvl and not next_buy_lvl) break pricing; // there must be one next to continue matching
     };
     Error.text("No matching available");
+  };
+
+  func newReward(owner : Principal, subaccount : ?Blob, rounds : Nat) {
+    rewards := RBTree.insert(rewards, Nat.compare, reward_id, ({ rounds; account = { owner; subaccount } }, false));
+    reward_id += 1;
   };
 
   func refundClose(caller : Principal, sub : Blob, env : B.Environment, reason : { #Expired : Null; #AlmostFilled : Null }, oid : Nat, _o : B.Order, unfilled : Nat, _lvl : B.Price, unfilled_q : Nat) : async* B.RunRes {
@@ -1279,6 +1319,6 @@ shared (install) persistent actor class Canister(
     };
     reunlock(?exec_id);
     // todo: blockify
-    Error.text("Pepee");
+    Error.text("No job available");
   };
 };

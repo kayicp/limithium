@@ -227,6 +227,7 @@ shared (install) persistent actor class Canister(
     #Ok 1;
   };
 
+  public shared query func lmtm_max_update_batch_size() : async ?Nat = async Value.metaNat(meta, I.MAX_UPDATE_BATCH);
   public shared ({ caller }) func lmtm_enqueue_minting_rounds(enqueues : [I.Enqueue]) : async Result.Type<(), I.EnqueueErrors> {
     // if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
     let vault_id = switch (Value.metaPrincipal(meta, I.VAULT)) {
