@@ -208,15 +208,11 @@ module {
     quote_token_id : Principal;
     taker_fee_numer : Nat;
     now : Nat64;
+    tx_window : Nat64;
+    permitted_drift : Nat64;
     ttl : Nat64;
   };
 
   public type PlaceDedupes = RBTree.Type<(Principal, PlaceArg), Nat>;
 
-  public type Block = {
-    val : Value.Type;
-    valh : Blob;
-    idh : Blob;
-    locked : Bool;
-  };
 };

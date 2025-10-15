@@ -261,7 +261,7 @@ module {
   public func valueOpens(owner : Principal, sub : Blob, memo : ?Blob, created_at : ?Nat64, now : Nat64, orders : [Value.Type], phash : ?Blob) : Value.Type {
     let subaccount = if (sub.size() > 0) ?sub else null;
     var tx = RBTree.empty<Text, Value.Type>();
-    tx := Value.setAccountP(tx, "acc", ?{ owner; subaccount });
+    tx := Value.setAccountP(tx, "acct", ?{ owner; subaccount });
     tx := Value.setBlob(tx, "memo", memo);
     tx := Value.setArray(tx, "orders", orders);
     switch created_at {
@@ -327,10 +327,6 @@ module {
     map := Value.setMap(map, "tx", tx);
     map := Value.setBlob(map, "phash", phash);
     #Map(RBTree.array(map));
-  };
-  public func getPhash(blocks : RBTree.Type<Nat, B.Block>) : (Nat, ?Blob) = switch (RBTree.max(blocks)) {
-    case (?(id, found)) (id + 1, ?found.valh);
-    case _ (0, null);
   };
 
   public func getEnvironment(_meta : Value.Metadata) : async* Result.Type<B.Environment, Error.Generic> {
@@ -432,6 +428,18 @@ module {
       meta := Value.setNat(meta, B.TTL, ?86400);
     };
     let now = Time64.nanos();
+    var tx_window = Nat64.fromNat(Value.getNat(meta, B.TX_WINDOW, 0));
+    let min_tx_window = Time64.MINUTES(15);
+    if (tx_window < min_tx_window) {
+      tx_window := min_tx_window;
+      meta := Value.setNat(meta, B.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+    };
+    var permitted_drift = Nat64.fromNat(Value.getNat(meta, B.PERMITTED_DRIFT, 0));
+    let min_permitted_drift = Time64.SECONDS(5);
+    if (permitted_drift < min_permitted_drift) {
+      permitted_drift := min_permitted_drift;
+      meta := Value.setNat(meta, B.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+    };
     #Ok {
       meta;
       vault;
@@ -449,6 +457,8 @@ module {
       min_expires_at = now + min_expiry;
       default_expires_at = now + default_expiry;
       now;
+      tx_window;
+      permitted_drift;
       ttl;
     };
   };

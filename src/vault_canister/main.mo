@@ -15,6 +15,13 @@ import Time64 "../util/motoko/Time64";
 import Vault "Vault";
 import Result "../util/motoko/Result";
 import Subaccount "../util/motoko/Subaccount";
+import A "../archive_canister/Types";
+import Archive "../archive_canister/Archive";
+import LEB128 "mo:leb128";
+import MerkleTree "../util/motoko/MerkleTree";
+import CertifiedData "mo:base/CertifiedData";
+import Text "mo:base/Text";
+import ICRC3T "../util/motoko/ICRC-3/Types";
 
 shared (install) persistent actor class Canister(
   // deploy : {
@@ -22,13 +29,14 @@ shared (install) persistent actor class Canister(
   //   #Upgrade;
   // }
 ) = Self {
-  var block_id = 0;
-
+  var tip_cert = MerkleTree.empty();
+  func updateTipCert() = CertifiedData.set(MerkleTree.treeHash(tip_cert)); // also call this on deploy.init
+  system func postupgrade() = updateTipCert(); // https://gist.github.com/nomeata/f325fcd2a6692df06e38adedf9ca1877
   var meta : Value.Metadata = RBTree.empty();
   var users : V.Users = RBTree.empty();
   var tokens = RBTree.empty<Principal, V.Token>();
   var executors = RBTree.empty<Principal, ()>();
-  var blocks = RBTree.empty<Nat, Value.Type>();
+  var blocks = RBTree.empty<Nat, A.Block>();
 
   var deposit_dedupes : V.Dedupes = RBTree.empty();
   var withdraw_dedupes : V.Dedupes = RBTree.empty();
@@ -86,12 +94,22 @@ shared (install) persistent actor class Canister(
     user := Vault.saveSubaccount(user, arg_subacc, subacc);
     users := Vault.saveUser(users, caller, user);
 
-    // todo: take fee, but skip since fee is zero
-    // todo: blockify
-    // todo: save dedupe
-    #Ok 1;
+    let (block_id, phash) = Archive.getPhash(blocks);
+    if (arg.created_at != null) deposit_dedupes := RBTree.insert(deposit_dedupes, Vault.dedupe, (caller, arg), block_id);
+    newBlock(block_id, Vault.valueBasic("deposit", caller, arg_subacc, 0, arg, xfer_id, now, phash));
+    #Ok block_id;
   };
-  // todo: deposit via icrc1_transfer
+
+  func newBlock(block_id : Nat, val : Value.Type) {
+    let valh = Value.hash(val);
+    let idh = Blob.fromArray(LEB128.toUnsignedBytes(block_id));
+    blocks := RBTree.insert(blocks, Nat.compare, block_id, { val; valh; idh; locked = false });
+
+    tip_cert := MerkleTree.empty();
+    tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_INDEX)], idh);
+    tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_HASH)], valh);
+    updateTipCert();
+  };
 
   public shared ({ caller }) func vault_withdraw(arg : V.TokenArg) : async V.WithdrawRes {
     if (not Value.getBool(meta, V.AVAILABLE, true)) return Error.text("Unavailable");
@@ -126,7 +144,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    bal := Vault.decUnlock(bal, to_lock); // lock to prevent double spending
+    bal := Vault.decUnlock(bal, to_lock);
     bal := Vault.incLock(bal, to_lock);
     subacc := Vault.saveBalance(subacc, arg.canister_id, bal);
     user := Vault.saveSubaccount(user, arg_subacc, subacc);
@@ -165,9 +183,10 @@ shared (install) persistent actor class Canister(
     user := Vault.saveSubaccount(user, canister_subaccount, subacc);
     users := Vault.saveUser(users, this_canister, user);
 
-    // todo: blockify
-    // todo: save dedupe
-    #Ok 1;
+    let (block_id, phash) = Archive.getPhash(blocks);
+    if (arg.created_at != null) withdraw_dedupes := RBTree.insert(withdraw_dedupes, Vault.dedupe, (caller, arg), block_id);
+    newBlock(block_id, Vault.valueBasic("withdraw", caller, arg_subacc, token.withdrawal_fee, arg, xfer_id, now, phash));
+    #Ok block_id;
   };
 
   public shared ({ caller }) func vault_execute(instruction_blocks : [[V.Instruction]]) : async V.ExecuteRes {
@@ -179,8 +198,6 @@ shared (install) persistent actor class Canister(
       case (?found) found;
       case _ Vault.getUser(users, p);
     };
-    var lblock_id = block_id;
-    let res = Buffer.Buffer<Nat>(instruction_blocks.size());
     for (block_index in Iter.range(0, instruction_blocks.size() - 1)) {
       let instructions = instruction_blocks[block_index];
       if (instructions.size() == 0) return #Err(#EmptyInstructions { block_index });
@@ -231,12 +248,17 @@ shared (install) persistent actor class Canister(
           };
         };
       };
-      // todo: blockify
-      res.add(lblock_id);
-      lblock_id += 1;
     };
     for ((k, v) in RBTree.entries(lusers)) users := Vault.saveUser(users, k, v);
-    block_id := lblock_id;
+    let res = Buffer.Buffer<Nat>(instruction_blocks.size());
+    let now = Time64.nanos();
+    for (b in Iter.range(0, instruction_blocks.size() - 1)) {
+      let vals = Buffer.Buffer<Value.Type>(instruction_blocks[b].size());
+      for (i in Iter.range(0, instruction_blocks[b].size() - 1)) vals.add(Vault.valueInstruction(instruction_blocks[b][i]));
+      let (block_id, phash) = Archive.getPhash(blocks);
+      newBlock(block_id, Vault.valueInstructions(caller, Buffer.toArray(vals), now, phash));
+      res.add(block_id);
+    };
     #Ok(Buffer.toArray(res));
   };
 
@@ -374,5 +396,10 @@ shared (install) persistent actor class Canister(
       if (max_query_batch > 0 and res.size() >= max_query_batch) break batching;
     };
     Buffer.toArray(res);
+  };
+
+  // todo: trim dedupe, archive
+  func trim() {
+
   };
 };

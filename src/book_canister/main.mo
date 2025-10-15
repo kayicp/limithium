@@ -4,7 +4,6 @@ import V "../vault_canister/Types";
 import A "../archive_canister/Types";
 import Archive "../archive_canister/main";
 import ArchiveL "../archive_canister/Archive";
-
 import ICRC1T "../icrc1_canister/Types";
 import ICRC1L "../icrc1_canister/ICRC1";
 import RewardToken "../icrc1_canister/main";
@@ -18,6 +17,7 @@ import Nat64 "mo:base/Nat64";
 import Nat "mo:base/Nat";
 import Iter "mo:base/Iter";
 import Option "mo:base/Option";
+import OptionX "../util/motoko/Option";
 import Buffer "mo:base/Buffer";
 import Result "../util/motoko/Result";
 import Time64 "../util/motoko/Time64";
@@ -55,7 +55,7 @@ shared (install) persistent actor class Canister(
 
   var place_dedupes : B.PlaceDedupes = RBTree.empty();
 
-  var blocks = RBTree.empty<Nat, B.Block>();
+  var blocks = RBTree.empty<Nat, A.Block>();
 
   var reward_id = 0;
   var rewards = RBTree.empty<Nat, (ICRC1T.Enqueue, locked : Bool)>();
@@ -166,7 +166,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    switch (checkIdempotency(caller, arg, env.now, arg.created_at)) {
+    switch (checkIdempotency(caller, arg, env, arg.created_at)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -181,7 +181,7 @@ shared (install) persistent actor class Canister(
     quote := Book.incAmount(quote, Book.newAmount(lquote));
     let oids = Buffer.Buffer<Nat>(arg.orders.size());
     let ovalues = Buffer.Buffer<Value.Type>(arg.orders.size());
-    let (block_id, phash) = Book.getPhash(blocks);
+    let (block_id, phash) = ArchiveL.getPhash(blocks);
     func newOrder(o : { index : Nat; expiry : Nat64 }) : B.Order {
       let new_order = Book.newOrder(exec_ids[o.index], block_id, env.now, { arg.orders[o.index] with owner = caller; sub; expires_at = o.expiry });
       orders := RBTree.insert(orders, Nat.compare, order_id, new_order);
@@ -410,7 +410,7 @@ shared (install) persistent actor class Canister(
     };
     user := getUser(caller);
     subacc := Book.getSubaccount(user, sub);
-    let (block_id, phash) = Book.getPhash(blocks);
+    let (block_id, phash) = ArchiveL.getPhash(blocks);
     let ovalues = Buffer.Buffer<Value.Type>(RBTree.size(refundables));
     for ((oid, o) in RBTree.entries(refundables)) {
       let execute = exec_ids[o.instruction_index];
@@ -484,32 +484,18 @@ shared (install) persistent actor class Canister(
     };
     case _ #Ok;
   };
-  func checkIdempotency(caller : Principal, arg : B.PlaceArg, now : Nat64, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { vault_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
-    var tx_window = Nat64.fromNat(Value.getNat(meta, B.TX_WINDOW, 0));
-    let min_tx_window = Time64.MINUTES(15);
-    if (tx_window < min_tx_window) {
-      tx_window := min_tx_window;
-      meta := Value.setNat(meta, B.TX_WINDOW, ?(Nat64.toNat(tx_window)));
-    };
-    var permitted_drift = Nat64.fromNat(Value.getNat(meta, B.PERMITTED_DRIFT, 0));
-    let min_permitted_drift = Time64.SECONDS(5);
-    if (permitted_drift < min_permitted_drift) {
-      permitted_drift := min_permitted_drift;
-      meta := Value.setNat(meta, B.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
-    };
-    switch (created_at) {
-      case (?created_time) {
-        let start_time = now - tx_window - permitted_drift;
-        if (created_time < start_time) return #Err(#TooOld);
-        let end_time = now + permitted_drift;
-        if (created_time > end_time) return #Err(#CreatedInFuture { vault_time = now });
-        switch (RBTree.get(place_dedupes, Book.dedupePlace, (caller, arg))) {
-          case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
-          case _ #Ok;
-        };
+  func checkIdempotency(caller : Principal, arg : B.PlaceArg, { now : Nat64; tx_window : Nat64; permitted_drift : Nat64 }, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { vault_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> = switch (created_at) {
+    case (?created_time) {
+      let start_time = now - tx_window - permitted_drift;
+      if (created_time < start_time) return #Err(#TooOld);
+      let end_time = now + permitted_drift;
+      if (created_time > end_time) return #Err(#CreatedInFuture { vault_time = now });
+      switch (RBTree.get(place_dedupes, Book.dedupePlace, (caller, arg))) {
+        case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
+        case _ #Ok;
       };
-      case _ #Ok;
     };
+    case _ #Ok;
   };
 
   public shared ({ caller }) func book_run(arg : B.RunArg) : async B.RunRes {
@@ -600,6 +586,18 @@ shared (install) persistent actor class Canister(
   func trim(caller : Principal, sub : Blob, env : B.Environment) : async* B.RunRes {
     var round = 0;
     let max_round = 100;
+    let start_time = env.now - env.tx_window - env.permitted_drift;
+    label trimming while (round <= max_round) {
+      let ((p, arg), _) = switch (RBTree.min(place_dedupes)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      round += 1;
+      switch (OptionX.compare(arg.created_at, ?start_time, Nat64.compare)) {
+        case (#less) place_dedupes := RBTree.delete(place_dedupes, Book.dedupePlace, (p, arg));
+        case _ break trimming;
+      };
+    };
     label trimming while (round <= max_round) {
       let (exp_t, exp_ids) = switch (RBTree.min(orders_by_expiry)) {
         case (?found) found;
@@ -747,7 +745,7 @@ shared (install) persistent actor class Canister(
     meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?max_batch);
 
     if (RBTree.size(blocks) <= max_batch) return #Err(#Sync(Error.generic("Not enough blocks to archive", 0)));
-    var locks = RBTree.empty<Nat, B.Block>();
+    var locks = RBTree.empty<Nat, A.Block>();
     let batch_buff = Buffer.Buffer<ICRC3T.BlockResult>(max_batch);
     label collecting for ((b_id, b) in RBTree.entries(blocks)) {
       if (b.locked) return #Err(#Sync(Error.generic("Some blocks are locked for archiving", 0)));
@@ -1203,7 +1201,7 @@ shared (install) persistent actor class Canister(
         if (sell_maker) newReward(sell_o.owner, sell_s, maker_reward) else newReward(buy_o.owner, buy_s, maker_reward);
         newReward(caller, Subaccount.opt(sub), 1);
 
-        let (block_id, phash) = Book.getPhash(blocks);
+        let (block_id, phash) = ArchiveL.getPhash(blocks);
         let sell_h = {
           id = sell_id;
           base = amt;
@@ -1321,7 +1319,7 @@ shared (install) persistent actor class Canister(
     orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, oid);
     orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expires_at + env.ttl, oid);
 
-    let (block_id, phash) = Book.getPhash(blocks);
+    let (block_id, phash) = ArchiveL.getPhash(blocks);
     let proof = ?{ block = block_id; execute };
     let rzn = switch reason {
       case (#AlmostFilled _) #AlmostFilled proof;
