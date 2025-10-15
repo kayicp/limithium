@@ -40,7 +40,7 @@ KEY STABLE VARIABLES:
 KEY UPDATE FUNCTIONS:
 - book_open: for users to place batched limit orders (buy or sell)
 - book_close: for users to close batched orders by ids
-- book_run: for competitive traders (who have active unfilled orders near current price) to notify the canister to do a work (match/settle orders, trim expired orders, etc.) and get rewarded LMTM token minting rounds
+- book_run: for competitive traders (who have active unfilled orders near current price) to notify the canister to do a work (match/settle orders, trim expired orders, etc.) and get rewarded XLT token minting rounds
 
 KEY QUERY FUNCTIONS:
 - book_metadata: returns order book settings
@@ -52,11 +52,11 @@ KEY QUERY FUNCTIONS:
 - book_ask_prices: returns paged sell prices, from lowest to highest 
 - book_bids_at, book_asks_at: returns paged order ids at price
 ================================================================================================
-(C) Limithium ICRC-1 compliant token (symbol: LMTM) (minting rate: decaying every round) 
+(C) Limithium ICRC-1 compliant token (symbol: XLT) (minting rate: decaying every round) 
 PURPOSE: To reward market makers, and to share platform's revenue with holders.
 
 KEY UPDATE FUNCTIONS:
-- lmtm_enqueue_minting_rounds: for Vault's executors only, to reward callers of `book_run` by 1 minting round if there's a job done, or to reward market makers minting rounds based on traded volume in ICP. 
+- xlt_enqueue_minting_rounds: for Vault's executors only, to reward callers of `book_run` by 1 minting round if there's a job done, or to reward market makers minting rounds based on traded volume in ICP. 
 ================================================================================================
 (D) Minimal Frontend Canister (only one)
 PURPOSE: Enable users to interact with all backend canisters intuitively. Must be hosted on ICP to prevent fake UI attacks (phishing or wallet draining attacks).

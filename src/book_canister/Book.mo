@@ -181,11 +181,9 @@ module {
   public func subaccNewBuy(s : B.Subaccount, oid : Nat, o : B.Order) : B.Subaccount = ({
     s with buys = RBTree.insert(s.buys, Nat.compare, o.price, oid);
   });
-  // todo: call this
   public func subaccDelSell(s : B.Subaccount, o : B.Order) : B.Subaccount = ({
     s with sells = RBTree.delete(s.sells, Nat.compare, o.price);
   });
-  // todo: call this
   public func subaccDelBuy(s : B.Subaccount, o : B.Order) : B.Subaccount = ({
     s with buys = RBTree.delete(s.buys, Nat.compare, o.price);
   });
@@ -277,10 +275,8 @@ module {
     map := Value.setBlob(map, "phash", phash);
     #Map(RBTree.array(map));
   };
-  public func valueCloses(owner : Principal, sub : Blob, memo : ?Blob, now : Nat64, orders : [Value.Type], phash : ?Blob) : Value.Type {
-    let subaccount = if (sub.size() > 0) ?sub else null;
+  public func valueCloses(memo : ?Blob, now : Nat64, orders : [Value.Type], phash : ?Blob) : Value.Type {
     var tx = RBTree.empty<Text, Value.Type>();
-    tx := Value.setAccountP(tx, "acc", ?{ owner; subaccount });
     tx := Value.setBlob(tx, "memo", memo);
     tx := Value.setArray(tx, "orders", orders);
     var map = RBTree.empty<Text, Value.Type>();
@@ -306,6 +302,30 @@ module {
     map := Value.setNat(map, unlock_key, ?unlock_amt);
     if (fee > 0) map := Value.setNat(map, "fee", ?fee);
     map := Value.setNat(map, "exec", ?execute);
+    #Map(RBTree.array(map));
+  };
+  public func valueTrade(trade_id : Nat, now : Nat64, phash : ?Blob, sh : B.SellHand, bh : B.BuyHand) : Value.Type {
+    var sell = RBTree.empty<Text, Value.Type>();
+    sell := Value.setNat(sell, "id", ?sh.id);
+    sell := Value.setNat(sell, "base", ?sh.base);
+    sell := Value.setNat(sell, "fee_quote", ?sh.fee_quote);
+    sell := Value.setNat(sell, "exec", ?sh.execute);
+    sell := Value.setNat(sell, "fee_exec", ?sh.fee_execute);
+    var buy = RBTree.empty<Text, Value.Type>();
+    buy := Value.setNat(buy, "id", ?bh.id);
+    buy := Value.setNat(buy, "quote", ?bh.quote);
+    buy := Value.setNat(buy, "fee_base", ?bh.fee_base);
+    buy := Value.setNat(buy, "exec", ?bh.execute);
+    buy := Value.setNat(buy, "fee_exec", ?bh.fee_execute);
+    var tx = RBTree.empty<Text, Value.Type>();
+    tx := Value.setNat(tx, "id", ?trade_id);
+    tx := Value.setMap(tx, "sell", sell);
+    tx := Value.setMap(tx, "buy", buy);
+    var map = RBTree.empty<Text, Value.Type>();
+    map := Value.setNat(map, "ts", ?Nat64.toNat(now));
+    map := Value.setText(map, "op", ?"trade");
+    map := Value.setMap(map, "tx", tx);
+    map := Value.setBlob(map, "phash", phash);
     #Map(RBTree.array(map));
   };
   public func getPhash(blocks : RBTree.Type<Nat, B.Block>) : (Nat, ?Blob) = switch (RBTree.max(blocks)) {

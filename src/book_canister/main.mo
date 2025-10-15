@@ -376,26 +376,24 @@ shared (install) persistent actor class Canister(
     func unlock<T>(t : T) : T {
       user := getUser(caller);
       subacc := Book.getSubaccount(user, sub);
-      for ((oid, _o) in RBTree.entries(refundables)) {
-        var o = _o.data;
-        var pr = Book.getLevel(RBTree.empty(), 0);
-        if (o.is_buy) {
-          pr := Book.getLevel(buy_book, o.price);
-          pr := Book.levelUnlock(pr, o.base.locked);
-          buy_book := Book.saveLevel(buy_book, o.price, pr);
-          var o_quote = o.base.locked * o.price;
+      for ((oid, o) in RBTree.entries(refundables)) {
+        if (o.data.is_buy) {
+          var pr = Book.getLevel(buy_book, o.data.price);
+          pr := Book.levelUnlock(pr, o.data.base.locked);
+          buy_book := Book.saveLevel(buy_book, o.data.price, pr);
+          var o_quote = o.data.base.locked * o.data.price;
           quote := Book.unlockAmount(quote, o_quote);
           subacc := Book.subaccUnlockQuote(subacc, o_quote);
         } else {
-          pr := Book.getLevel(sell_book, o.price);
-          pr := Book.levelUnlock(pr, o.base.locked);
-          sell_book := Book.saveLevel(sell_book, o.price, pr);
-          base := Book.unlockAmount(base, o.base.locked);
-          subacc := Book.subaccUnlockBase(subacc, o.base.locked);
+          var pr = Book.getLevel(sell_book, o.data.price);
+          pr := Book.levelUnlock(pr, o.data.base.locked);
+          sell_book := Book.saveLevel(sell_book, o.data.price, pr);
+          base := Book.unlockAmount(base, o.data.base.locked);
+          subacc := Book.subaccUnlockBase(subacc, o.data.base.locked);
         };
-        o := Book.unlockOrder(o, o.base.locked);
-        o := { o with closed = null };
-        orders := RBTree.insert(orders, Nat.compare, oid, o);
+        var order = Book.unlockOrder(o.data, o.data.base.locked);
+        order := { order with closed = null };
+        orders := RBTree.insert(orders, Nat.compare, oid, order);
       };
       user := Book.saveSubaccount(user, sub, subacc);
       user := saveUser(caller, user);
@@ -406,57 +404,55 @@ shared (install) persistent actor class Canister(
     if (user_bals[0] < lbase or user_bals[1] < lquote) return unlock(#Err(#InsufficientBalance { base_balance = user_bals[0]; quote_balance = user_bals[1] }));
 
     let instruction_blocks = Buffer.toArray(refunds_buff);
-    switch (await env.vault.vault_execute(instruction_blocks)) {
+    let exec_ids = switch (await env.vault.vault_execute(instruction_blocks)) {
       case (#Err err) return unlock(#Err(#ExecutionFailed { instruction_blocks; error = err }));
-      case (#Ok ok) {
-        user := getUser(caller);
-        subacc := Book.getSubaccount(user, sub);
-        let (block_id, phash) = Book.getPhash(blocks);
-        let ovalues = Buffer.Buffer<Value.Type>(RBTree.size(refundables));
-        for ((oid, o) in RBTree.entries(refundables)) {
-          var pr = Book.getLevel(RBTree.empty(), 0);
-          if (o.data.is_buy) {
-            pr := Book.getLevel(buy_book, o.data.price);
-            pr := Book.levelDelOrder(pr, oid);
-            pr := Book.levelDecAmount(pr, o.data.base);
-            buy_book := Book.saveLevel(buy_book, o.data.price, pr);
-            let o_quote = Book.mulAmount(o.data.base, o.data.price);
-            quote := Book.decAmount(quote, o_quote);
-            subacc := Book.subaccDecQuote(subacc, o_quote);
-            let fee = if (o.reason == #Canceled null) fee_quote else 0;
-            ovalues.add(Book.valueClose(oid, "quote", o_quote.locked, fee, execute));
-          } else {
-            pr := Book.getLevel(sell_book, o.data.price);
-            pr := Book.levelDelOrder(pr, oid);
-            pr := Book.levelDecAmount(pr, o.data.base);
-            sell_book := Book.saveLevel(sell_book, o.data.price, pr);
-            base := Book.decAmount(base, o.data.base);
-            subacc := Book.subaccDecBase(subacc, o.data.base);
-            let fee = if (o.reason == #Canceled null) fee_base else 0;
-            ovalues.add(Book.valueClose(oid, "base", o.data.base.locked, fee, execute));
-          };
-          let execute = ok[o.instruction_index];
-          let proof = ?{ block = block_id; execute };
-          let reason = switch (o.reason) {
-            case (#AlmostFilled _) #AlmostFilled proof;
-            case (#Canceled _) #Canceled proof;
-            case (#Expired _) #Expired proof;
-          };
-          let closed = ?{ caller; sub; at = env.now; reason };
-          var order = Book.unlockOrder(o.data, o.data.base.locked);
-          order := { order with closed };
-          orders := RBTree.insert(orders, Nat.compare, oid, order);
-
-          orders_by_expiry := Book.delExpiry(orders_by_expiry, o.data.expires_at, oid);
-          orders_by_expiry := Book.newExpiry(orders_by_expiry, o.data.expires_at + env.ttl, oid);
-        };
-        user := Book.saveSubaccount(user, sub, subacc);
-        user := saveUser(caller, user);
-        let val = Book.valueCloses(caller, sub, arg.memo, env.now, Buffer.toArray(ovalues), phash);
-        newBlock(block_id, val);
-        #Ok block_id;
-      };
+      case (#Ok ok) ok;
     };
+    user := getUser(caller);
+    subacc := Book.getSubaccount(user, sub);
+    let (block_id, phash) = Book.getPhash(blocks);
+    let ovalues = Buffer.Buffer<Value.Type>(RBTree.size(refundables));
+    for ((oid, o) in RBTree.entries(refundables)) {
+      let execute = exec_ids[o.instruction_index];
+      if (o.data.is_buy) {
+        var pr = Book.getLevel(buy_book, o.data.price);
+        pr := Book.levelDelOrder(pr, oid);
+        pr := Book.levelDecAmount(pr, o.data.base);
+        buy_book := Book.saveLevel(buy_book, o.data.price, pr);
+        let o_quote = Book.mulAmount(o.data.base, o.data.price);
+        quote := Book.decAmount(quote, o_quote);
+        subacc := Book.subaccDecQuote(subacc, o_quote);
+        let fee = if (o.reason == #Canceled null) fee_quote else 0;
+        ovalues.add(Book.valueClose(oid, "quote", o_quote.locked, fee, execute));
+      } else {
+        var pr = Book.getLevel(sell_book, o.data.price);
+        pr := Book.levelDelOrder(pr, oid);
+        pr := Book.levelDecAmount(pr, o.data.base);
+        sell_book := Book.saveLevel(sell_book, o.data.price, pr);
+        base := Book.decAmount(base, o.data.base);
+        subacc := Book.subaccDecBase(subacc, o.data.base);
+        let fee = if (o.reason == #Canceled null) fee_base else 0;
+        ovalues.add(Book.valueClose(oid, "base", o.data.base.locked, fee, execute));
+      };
+      orders_by_expiry := Book.delExpiry(orders_by_expiry, o.data.expires_at, oid);
+      orders_by_expiry := Book.newExpiry(orders_by_expiry, o.data.expires_at + env.ttl, oid);
+
+      let proof = ?{ block = block_id; execute };
+      let reason = switch (o.reason) {
+        case (#AlmostFilled _) #AlmostFilled proof;
+        case (#Canceled _) #Canceled proof;
+        case (#Expired _) #Expired proof;
+      };
+      let closed = ?{ caller; sub; at = env.now; reason };
+      var order = Book.unlockOrder(o.data, o.data.base.locked);
+      order := { order with closed };
+      orders := RBTree.insert(orders, Nat.compare, oid, order);
+    };
+    user := Book.saveSubaccount(user, sub, subacc);
+    user := saveUser(caller, user);
+    let val = Book.valueCloses(arg.memo, env.now, Buffer.toArray(ovalues), phash);
+    newBlock(block_id, val);
+    #Ok block_id;
   };
 
   public shared query func archive_min_block() : async ?Nat = async RBTree.minKey(blocks);
@@ -676,6 +672,7 @@ shared (install) persistent actor class Canister(
             var user = getUser(o.owner);
             var subacc = Book.getSubaccount(user, o.sub);
             subacc := Book.subaccDelOrder(subacc, id);
+            subacc := if (o.is_buy) Book.subaccDelBuy(subacc, o) else Book.subaccDelSell(subacc, o);
             user := Book.saveSubaccount(user, o.sub, subacc);
             user := saveUser(o.owner, user);
             continue trimming; // delete from ttl
@@ -704,7 +701,7 @@ shared (install) persistent actor class Canister(
         case _ break trimming;
       };
       let reward_token = actor (Principal.toText(reward_token_id)) : RewardToken.Canister;
-      let max_batch = switch (await reward_token.lmtm_max_update_batch_size()) {
+      let max_batch = switch (await reward_token.xlt_max_update_batch_size()) {
         case (?found) Nat.max(1, found);
         case _ 1;
       };
@@ -718,7 +715,7 @@ shared (install) persistent actor class Canister(
         if (RBTree.size(locks) >= max_batch) break collecting;
       };
       for ((r_id, r) in RBTree.entries(locks)) rewards := RBTree.insert(rewards, Nat.compare, r_id, (r, true));
-      switch (await reward_token.lmtm_enqueue_minting_rounds(Buffer.toArray(buff))) {
+      switch (await reward_token.xlt_enqueue_minting_rounds(Buffer.toArray(buff))) {
         case (#Err err) for ((r_id, r) in RBTree.entries(locks)) rewards := RBTree.insert(rewards, Nat.compare, r_id, (r, false));
         case (#Ok) for ((r_id, r) in RBTree.entries(locks)) rewards := RBTree.delete(rewards, Nat.compare, r_id);
       };
@@ -1192,6 +1189,21 @@ shared (install) persistent actor class Canister(
           case (#Ok ok) ok;
         };
         unlockMatch();
+
+        let i_quote = amt * buy_o.price; // dont use maker price for accurate representation
+        base := Book.fillAmount(base, amt);
+        quote := Book.fillAmount(quote, i_quote);
+        sell_lvl := Book.levelFill(sell_lvl, amt);
+        buy_lvl := Book.levelFill(buy_lvl, amt);
+        sell_sub := Book.subaccFillBase(sell_sub, amt);
+        buy_sub := Book.subaccFillQuote(buy_sub, i_quote);
+        saveMatch();
+
+        let maker_reward = Nat.max(amt_q / env.min_quote_amount, 1);
+        if (sell_maker) newReward(sell_o.owner, sell_s, maker_reward) else newReward(buy_o.owner, buy_s, maker_reward);
+        newReward(caller, Subaccount.opt(sub), 1);
+
+        let (block_id, phash) = Book.getPhash(blocks);
         let sell_h = {
           id = sell_id;
           base = amt;
@@ -1216,21 +1228,10 @@ shared (install) persistent actor class Canister(
         sell_o := Book.fillOrder(sell_o, amt, trade_id);
         buy_o := Book.fillOrder(buy_o, amt, trade_id);
         trades := RBTree.insert(trades, Nat.compare, trade_id, trade);
+        let val = Book.valueTrade(trade_id, env.now, phash, sell_h, buy_h);
+        newBlock(block_id, val);
         trade_id += 1;
-
-        base := Book.fillAmount(base, amt);
-        quote := Book.fillAmount(quote, amt_q); // todo: dont fill by maker price, use buy price
-        sell_lvl := Book.levelFill(sell_lvl, amt);
-        buy_lvl := Book.levelFill(buy_lvl, amt);
-        sell_sub := Book.subaccFillBase(sell_sub, amt);
-        buy_sub := Book.subaccFillQuote(buy_sub, amt_q);
-        saveMatch();
-
-        let maker_reward = Nat.max(amt_q / env.min_quote_amount, 1);
-        if (sell_maker) newReward(sell_o.owner, sell_s, maker_reward) else newReward(buy_o.owner, buy_s, maker_reward);
-        newReward(caller, Subaccount.opt(sub), 1);
-        // todo: blockify
-        // todo: return block
+        return #Ok block_id;
       };
       if (not next_sell_lvl and not next_buy_lvl) break pricing; // there must be one next to continue matching
     };
@@ -1267,11 +1268,7 @@ shared (install) persistent actor class Canister(
     user := Book.saveSubaccount(user, o.sub, subacc);
     user := saveUser(o.owner, user);
 
-    let user_bals = await env.vault.vault_locked_balances_of([instruction]);
-    if (user_bals[0] < instruction.amount) return Error.text("Reunlock");
-
-    let execute_res = await env.vault.vault_execute([[instruction]]);
-    func reunlock(exec_ok : ?Nat) {
+    func unlockX<T>(t : T) : T {
       user := getUser(caller);
       subacc := Book.getSubaccount(user, sub);
       if (o.is_buy) {
@@ -1288,46 +1285,54 @@ shared (install) persistent actor class Canister(
         subacc := Book.subaccUnlockBase(subacc, unfilled);
       };
       o := Book.unlockOrder(o, unfilled);
-      let closed = switch exec_ok {
-        case (?execute) {
-          lvl := Book.levelDelOrder(lvl, oid);
-          lvl := Book.levelDecAmount(lvl, o.base);
-          if (o.is_buy) {
-            buy_book := Book.saveLevel(buy_book, o.price, lvl);
-            let o_quote = Book.mulAmount(o.base, o.price);
-            quote := Book.decAmount(quote, o_quote);
-            subacc := Book.subaccDecQuote(subacc, o_quote);
-          } else {
-            sell_book := Book.saveLevel(sell_book, o.price, lvl);
-            base := Book.decAmount(base, o.base);
-            subacc := Book.subaccDecBase(subacc, o.base);
-          };
-          orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, oid);
-          orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expires_at + env.ttl, oid);
-
-          let proof = ?{ block = block_id; execute };
-          let rzn = switch reason {
-            case (#AlmostFilled _) #AlmostFilled proof;
-            case (#Expired _) #Expired proof;
-          };
-          ?{ caller; sub; at = env.now; reason = rzn };
-        };
-        case _ null;
-      };
-      o := { o with closed };
+      o := { o with closed = null };
       orders := RBTree.insert(orders, Nat.compare, oid, o);
       user := Book.saveSubaccount(user, sub, subacc);
       user := saveUser(o.owner, user);
+      t;
     };
-    let exec_id = switch execute_res {
-      case (#Err err) {
-        reunlock(null);
-        return #Err(#CloseFailed { order = oid; instruction_blocks = [[instruction]]; error = err });
-      };
+    let user_bals = await env.vault.vault_locked_balances_of([instruction]);
+    if (user_bals[0] < instruction.amount) return unlockX(Error.text("Insufficient balance"));
+
+    let execute = switch (await env.vault.vault_execute([[instruction]])) {
+      case (#Err err) return unlockX(#Err(#CloseFailed { order = oid; instruction_blocks = [[instruction]]; error = err }));
       case (#Ok ok) ok[0];
     };
-    reunlock(?exec_id);
-    // todo: blockify
+    user := getUser(caller);
+    subacc := Book.getSubaccount(user, sub);
+    let val = if (o.is_buy) {
+      lvl := Book.getLevel(buy_book, o.price);
+      lvl := Book.levelDelOrder(lvl, oid);
+      lvl := Book.levelDecAmount(lvl, o.base);
+      buy_book := Book.saveLevel(buy_book, o.price, lvl);
+      let o_quote = Book.mulAmount(o.base, o.price);
+      quote := Book.decAmount(quote, o_quote);
+      subacc := Book.subaccDecQuote(subacc, o_quote);
+      [Book.valueClose(oid, "quote", quote.locked, 0, execute)];
+    } else {
+      lvl := Book.getLevel(sell_book, o.price);
+      lvl := Book.levelDelOrder(lvl, oid);
+      lvl := Book.levelDecAmount(lvl, o.base);
+      sell_book := Book.saveLevel(sell_book, o.price, lvl);
+      base := Book.decAmount(base, o.base);
+      subacc := Book.subaccDecBase(subacc, o.base);
+      [Book.valueClose(oid, "base", o.base.locked, 0, execute)];
+    };
+    orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, oid);
+    orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expires_at + env.ttl, oid);
+
+    let (block_id, phash) = Book.getPhash(blocks);
+    let proof = ?{ block = block_id; execute };
+    let rzn = switch reason {
+      case (#AlmostFilled _) #AlmostFilled proof;
+      case (#Expired _) #Expired proof;
+    };
+    let closed = ?{ caller; sub; at = env.now; reason = rzn };
+    o := { o with closed };
+    orders := RBTree.insert(orders, Nat.compare, oid, o);
+    user := Book.saveSubaccount(user, sub, subacc);
+    user := saveUser(o.owner, user);
+    newBlock(block_id, Book.valueCloses(null, env.now, val, phash));
     Error.text("No job available");
   };
 };

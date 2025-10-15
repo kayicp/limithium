@@ -14,9 +14,9 @@ module {
   public let MAX_APPROVAL_EXPIRY = "icrc1:max_approval_expiry";
   public let MIN_APPROVAL_EXPIRY = "icrc1:min_approval_expiry";
   public let DEFAULT_APPROVAL_EXPIRY = "icrc1:default_approval_expiry";
-  public let VAULT = "lmtm:vault";
-  public let MAX_UPDATE_BATCH = "lmtm:max_update_batch_size";
-  public let MAX_MINT = "lmtm:max_mint_per_round";
+  public let VAULT = "xlt:vault";
+  public let MAX_UPDATE_BATCH = "xlt:max_update_batch_size";
+  public let MAX_MINT = "xlt:max_mint_per_round";
 
   public type Account = { owner : Principal; subaccount : ?Blob };
   public type Approval = { allowance : Nat; expires_at : Nat64 };

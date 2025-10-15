@@ -50,21 +50,23 @@ module {
   };
   public type Price = { base : Amount; orders : Nats };
   public type Book = RBTree.Type<(price : Nat), Price>;
+  public type SellHand = {
+    id : Nat;
+    base : Nat;
+    fee_quote : Nat;
+    execute : Nat;
+    fee_execute : Nat;
+  };
+  public type BuyHand = {
+    id : Nat;
+    quote : Nat;
+    fee_base : Nat;
+    execute : Nat;
+    fee_execute : Nat;
+  };
   public type Trade = {
-    sell : {
-      id : Nat;
-      base : Nat;
-      fee_quote : Nat;
-      execute : Nat;
-      fee_execute : Nat;
-    };
-    buy : {
-      id : Nat;
-      quote : Nat;
-      fee_base : Nat;
-      execute : Nat;
-      fee_execute : Nat;
-    };
+    sell : SellHand;
+    buy : BuyHand;
     at : Nat64;
     price : Nat;
     block : Nat;

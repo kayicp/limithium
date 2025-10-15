@@ -227,8 +227,8 @@ shared (install) persistent actor class Canister(
     #Ok 1;
   };
 
-  public shared query func lmtm_max_update_batch_size() : async ?Nat = async Value.metaNat(meta, I.MAX_UPDATE_BATCH);
-  public shared ({ caller }) func lmtm_enqueue_minting_rounds(enqueues : [I.Enqueue]) : async Result.Type<(), I.EnqueueErrors> {
+  public shared query func xlt_max_update_batch_size() : async ?Nat = async Value.metaNat(meta, I.MAX_UPDATE_BATCH);
+  public shared ({ caller }) func xlt_enqueue_minting_rounds(enqueues : [I.Enqueue]) : async Result.Type<(), I.EnqueueErrors> {
     // if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
     let vault_id = switch (Value.metaPrincipal(meta, I.VAULT)) {
       case (?found) found;
@@ -310,7 +310,7 @@ shared (install) persistent actor class Canister(
   };
 
   public shared query func icrc1_name() : async Text = async "Limithium";
-  public shared query func icrc1_symbol() : async Text = async "LMTM";
+  public shared query func icrc1_symbol() : async Text = async "XLT";
   public shared query func icrc1_decimals() : async Nat8 = async 8;
   public shared query func icrc1_fee() : async Nat = async 10_000;
   public shared query func icrc1_metadata() : async [(Text, Value.Type)] = async [];
