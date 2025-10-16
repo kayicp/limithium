@@ -44,7 +44,7 @@ module {
     fee : ?Nat;
     memo : ?Blob;
     from_subaccount : ?Blob;
-    created_at : ?Nat64;
+    created_at_time : ?Nat64;
     amount : Nat;
   };
 
@@ -54,7 +54,7 @@ module {
     spender_subaccount : ?Blob;
     from : Account;
     memo : ?Blob;
-    created_at : ?Nat64;
+    created_at_time : ?Nat64;
     amount : Nat;
   };
 
@@ -74,7 +74,7 @@ module {
     fee : ?Nat;
     memo : ?Blob;
     from_subaccount : ?Blob;
-    created_at : ?Nat64;
+    created_at_time : ?Nat64;
     amount : Nat;
     expected_allowance : ?Nat;
     expires_at : ?Nat64;
@@ -120,6 +120,8 @@ module {
     max_mint : Nat;
     total_supply : Nat;
     now : Nat64;
+    dedupe_start : Nat64;
+    dedupe_end : Nat64;
   };
 
   public type Enqueue = { account : Account; rounds : Nat };

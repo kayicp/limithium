@@ -9,6 +9,8 @@ import Value "../util/motoko/Value";
 import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import Time64 "../util/motoko/Time64";
+import Option "../util/motoko/Option";
+import Subaccount "../util/motoko/Subaccount";
 
 module {
   public func getBalance(s : V.Subaccount, token : Principal) : V.Balance = switch (RBTree.get(s, Principal.compare, token)) {
@@ -101,7 +103,33 @@ module {
     #Map(RBTree.array(map));
   };
 
-  public func dedupe(a : (Principal, V.TokenArg), b : (Principal, V.TokenArg)) : Order.Order = #equal; // todo: finish this, start with time;
+  public func dedupe((ap : Principal, a : V.TokenArg), (bp : Principal, b : V.TokenArg)) : Order.Order {
+    switch (Option.compare(a.created_at, b.created_at, Nat64.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.memo, b.memo, Blob.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Principal.compare(ap, bp)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Blob.compare(Subaccount.get(a.subaccount), Subaccount.get(b.subaccount))) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Principal.compare(a.canister_id, b.canister_id)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.fee, b.fee, Nat.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    Nat.compare(a.amount, b.amount);
+  };
 
   public func getEnvironment(_meta : Value.Metadata) : Result.Type<V.Environment, Error.Generic> {
     var meta = _meta;

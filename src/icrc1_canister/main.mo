@@ -12,6 +12,16 @@ import Nat "mo:base/Nat";
 import Time64 "../util/motoko/Time64";
 import Subaccount "../util/motoko/Subaccount";
 import V "../vault_canister/Types";
+import A "../archive_canister/Types";
+import ArchiveL "../archive_canister/Archive";
+import Archive "../archive_canister/main";
+import LEB128 "mo:leb128";
+import MerkleTree "../util/motoko/MerkleTree";
+import CertifiedData "mo:base/CertifiedData";
+import Text "mo:base/Text";
+import ICRC3T "../util/motoko/ICRC-3/Types";
+import OptionX "../util/motoko/Option";
+import Cycles "mo:core/Cycles";
 
 shared (install) persistent actor class Canister(
   // deploy : {
@@ -19,11 +29,14 @@ shared (install) persistent actor class Canister(
   //   #Upgrade;
   // }
 ) = Self {
+  var tip_cert = MerkleTree.empty();
+  func updateTipCert() = CertifiedData.set(MerkleTree.treeHash(tip_cert)); // also call this on deploy.init
+  system func postupgrade() = updateTipCert(); // https://gist.github.com/nomeata/f325fcd2a6692df06e38adedf9ca1877
+
   var users : I.Users = RBTree.empty();
   var meta = RBTree.empty<Text, Value.Type>();
 
-  var block_id = 0;
-  var blocks = RBTree.empty<Nat, Value.Type>();
+  var blocks = RBTree.empty<Nat, A.Block>();
 
   var transfer_dedupes = RBTree.empty<(Principal, I.TransferArg), Nat>();
   var approve_dedupes = RBTree.empty<(Principal, I.ApproveArg), Nat>();
@@ -31,6 +44,17 @@ shared (install) persistent actor class Canister(
 
   var prev_mint : ?Nat = null;
   var mint_queue = RBTree.empty<Nat, I.Enqueue>();
+
+  func newBlock(block_id : Nat, val : Value.Type) {
+    let valh = Value.hash(val);
+    let idh = Blob.fromArray(LEB128.toUnsignedBytes(block_id));
+    blocks := RBTree.insert(blocks, Nat.compare, block_id, { val; valh; idh; locked = false });
+
+    tip_cert := MerkleTree.empty();
+    tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_INDEX)], idh);
+    tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_HASH)], valh);
+    updateTipCert();
+  };
 
   public shared ({ caller }) func icrc1_transfer(arg : I.TransferArg) : async Result.Type<Nat, I.TransferError> {
     // if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
@@ -49,7 +73,7 @@ shared (install) persistent actor class Canister(
     if (is_burn and arg.amount < env.fee) return #Err(#BadBurn { min_burn_amount = env.fee });
 
     let is_mint = ICRC1.equalAccount(from, env.minter);
-    let is_transfer = not (is_burn or is_mint);
+    let is_transfer = not is_burn and not is_mint;
     let expected_fee = if (is_transfer) env.fee else 0;
     switch (arg.fee) {
       case (?defined) if (defined != expected_fee) return #Err(#BadFee { expected_fee });
@@ -66,7 +90,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    switch (checkIdempotency(caller, #Transfer arg, env.now, arg.created_at)) {
+    switch (checkIdempotency(caller, #Transfer arg, env, arg.created_at_time)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -91,9 +115,10 @@ shared (install) persistent actor class Canister(
       saveUser(env.minter.owner, user);
     };
 
-    // todo: blockify
-    // todo: save dedupe
-    #Ok 1;
+    let (block_id, phash) = ArchiveL.getPhash(blocks);
+    if (arg.created_at_time != null) transfer_dedupes := RBTree.insert(transfer_dedupes, ICRC1.dedupeTransfer, (caller, arg), block_id);
+    newBlock(block_id, ICRC1.valueTransfer(caller, arg, if (is_burn) #Burn else if (is_mint) #Mint else #Transfer, expected_fee, env.now, phash));
+    #Ok block_id;
   };
 
   public shared ({ caller }) func icrc2_approve(arg : I.ApproveArg) : async Result.Type<Nat, I.ApproveError> {
@@ -141,7 +166,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    switch (checkIdempotency(caller, #Approve arg, env.now, arg.created_at)) {
+    switch (checkIdempotency(caller, #Approve arg, env, arg.created_at_time)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -150,10 +175,11 @@ shared (install) persistent actor class Canister(
     user := ICRC1.saveSubaccount(user, sub, subacc);
     saveUser(caller, user);
 
-    // todo: blockify
-    // todo: save dedupe
     // todo: register expiry
-    #Ok 1;
+    let (block_id, phash) = ArchiveL.getPhash(blocks);
+    if (arg.created_at_time != null) approve_dedupes := RBTree.insert(approve_dedupes, ICRC1.dedupeApprove, (caller, arg), block_id);
+    newBlock(block_id, ICRC1.valueApprove(caller, arg, env.fee, env.now, phash));
+    #Ok block_id;
   };
 
   public shared ({ caller }) func icrc2_transfer_from(arg : I.TransferFromArg) : async Result.Type<Nat, I.TransferFromError> {
@@ -196,7 +222,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    switch (checkIdempotency(caller, #TransferFrom arg, env.now, arg.created_at)) {
+    switch (checkIdempotency(caller, #TransferFrom arg, env, arg.created_at_time)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -221,10 +247,10 @@ shared (install) persistent actor class Canister(
     user := ICRC1.saveSubaccount(user, sub, subacc);
     saveUser(env.minter.owner, user);
 
-    // todo: blockify
-    // todo: save dedupe
-
-    #Ok 1;
+    let (block_id, phash) = ArchiveL.getPhash(blocks);
+    if (arg.created_at_time != null) transfer_from_dedupes := RBTree.insert(transfer_from_dedupes, ICRC1.dedupeTransferFrom, (caller, arg), block_id);
+    newBlock(block_id, ICRC1.valueTransferFrom(caller, arg, env.fee, env.now, phash));
+    #Ok block_id;
   };
 
   public shared query func xlt_max_update_batch_size() : async ?Nat = async Value.metaNat(meta, I.MAX_UPDATE_BATCH);
@@ -353,36 +379,124 @@ shared (install) persistent actor class Canister(
     };
     case _ #Ok;
   };
-  func checkIdempotency(caller : Principal, opr : I.ArgType, now : Nat64, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
-    var tx_window = Nat64.fromNat(Value.getNat(meta, I.TX_WINDOW, 0));
-    let min_tx_window = Time64.MINUTES(15);
-    if (tx_window < min_tx_window) {
-      tx_window := min_tx_window;
-      meta := Value.setNat(meta, I.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+  func checkIdempotency(caller : Principal, opr : I.ArgType, env : I.Environment, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
+    let ct = switch (created_at) {
+      case (?defined) defined;
+      case _ return #Ok;
     };
-    var permitted_drift = Nat64.fromNat(Value.getNat(meta, I.PERMITTED_DRIFT, 0));
-    let min_permitted_drift = Time64.SECONDS(5);
-    if (permitted_drift < min_permitted_drift) {
-      permitted_drift := min_permitted_drift;
-      meta := Value.setNat(meta, I.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+    if (ct < env.dedupe_start) return #Err(#TooOld);
+    if (ct > env.dedupe_end) return #Err(#CreatedInFuture { ledger_time = env.now });
+    let found_block = switch opr {
+      case (#Transfer xfer) RBTree.get(transfer_dedupes, ICRC1.dedupeTransfer, (caller, xfer));
+      case (#Approve appr) RBTree.get(approve_dedupes, ICRC1.dedupeApprove, (caller, appr));
+      case (#TransferFrom xfer) RBTree.get(transfer_from_dedupes, ICRC1.dedupeTransferFrom, (caller, xfer));
     };
-    switch (created_at) {
-      case (?created_time) {
-        let start_time = now - tx_window - permitted_drift;
-        if (created_time < start_time) return #Err(#TooOld);
-        let end_time = now + permitted_drift;
-        if (created_time > end_time) return #Err(#CreatedInFuture { ledger_time = now });
-        let found_block = switch opr {
-          case (#Transfer xfer) RBTree.get(transfer_dedupes, ICRC1.dedupeTransfer, (caller, xfer));
-          case (#Approve appr) RBTree.get(approve_dedupes, ICRC1.dedupeApprove, (caller, appr));
-          case (#TransferFrom xfer) RBTree.get(transfer_from_dedupes, ICRC1.dedupeTransferFrom, (caller, xfer));
-        };
-        switch found_block {
-          case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
-          case _ #Ok;
-        };
-      };
+    switch found_block {
+      case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
       case _ #Ok;
     };
   };
+
+  // func sendBlock() : async* Result.Type<(), { #Sync : Error.Generic; #Async : Error.Generic }> {
+  //   var max_batch = Value.getNat(meta, A.MAX_UPDATE_BATCH_SIZE, 0);
+  //   if (max_batch == 0) max_batch := 1;
+  //   if (max_batch > 100) max_batch := 100;
+  //   meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?max_batch);
+
+  //   if (RBTree.size(blocks) <= max_batch) return #Err(#Sync(Error.generic("Not enough blocks to archive", 0)));
+  //   var locks = RBTree.empty<Nat, A.Block>();
+  //   let batch_buff = Buffer.Buffer<ICRC3T.BlockResult>(max_batch);
+  //   label collecting for ((b_id, b) in RBTree.entries(blocks)) {
+  //     if (b.locked) return #Err(#Sync(Error.generic("Some blocks are locked for archiving", 0)));
+  //     locks := RBTree.insert(locks, Nat.compare, b_id, b);
+  //     batch_buff.add({ id = b_id; block = b.val });
+  //     if (batch_buff.size() >= max_batch) break collecting;
+  //   };
+  //   for ((b_id, b) in RBTree.entries(locks)) blocks := RBTree.insert(blocks, Nat.compare, b_id, { b with locked = true });
+  //   func reunlock<T>(t : T) : T {
+  //     for ((b_id, b) in RBTree.entries(locks)) blocks := RBTree.insert(blocks, Nat.compare, b_id, { b with locked = false });
+  //     t;
+  //   };
+  //   let root = switch (Value.metaPrincipal(meta, A.ROOT)) {
+  //     case (?exist) exist;
+  //     case _ switch (await* createArchive(null)) {
+  //       case (#Ok created) created;
+  //       case (#Err err) return reunlock(#Err(#Async(err)));
+  //     };
+  //   };
+  //   let batch = Buffer.toArray(batch_buff);
+  //   let start = batch[0].id;
+  //   var prev_redir : A.Redirect = #Ask(actor (Principal.toText(root)));
+  //   var curr_redir = prev_redir;
+  //   var next_redir = try await (actor (Principal.toText(root)) : Archive.Canister).rb_archive_ask(start) catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+
+  //   label travelling while true {
+  //     switch (ArchiveL.validateSequence(prev_redir, curr_redir, next_redir)) {
+  //       case (#Err msg) return reunlock(#Err(#Async(Error.generic(msg, 0))));
+  //       case _ ();
+  //     };
+  //     prev_redir := curr_redir;
+  //     curr_redir := next_redir;
+  //     next_redir := switch next_redir {
+  //       case (#Ask cnstr) try await cnstr.rb_archive_ask(start) catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+  //       case (#Add cnstr) {
+  //         let cnstr_id = Principal.fromActor(cnstr);
+  //         try {
+  //           switch (await cnstr.rb_archive_add(batch)) {
+  //             case (#Err(#InvalidDestination r)) r;
+  //             case (#Err(#UnexpectedBlock x)) return reunlock(#Err(#Async(Error.generic("UnexpectedBlock: " # debug_show x, 0))));
+  //             case (#Err(#MinimumBlockViolation x)) return reunlock(#Err(#Async(Error.generic("MinimumBlockViolation: " # debug_show x, 0))));
+  //             case (#Err(#BatchTooLarge x)) return reunlock(#Err(#Async(Error.generic("BatchTooLarge: " # debug_show x, 0))));
+  //             case (#Err(#GenericError x)) return reunlock(#Err(#Async(#GenericError x)));
+  //             case (#Ok) break travelling;
+  //           };
+  //         } catch ee #Create(actor (Principal.toText(cnstr_id)));
+  //       };
+  //       case (#Create cnstr) {
+  //         let cnstr_id = Principal.fromActor(cnstr);
+  //         try {
+  //           let slave = switch (await* createArchive(?cnstr_id)) {
+  //             case (#Err err) return reunlock(#Err(#Async(err)));
+  //             case (#Ok created) created;
+  //           };
+  //           switch (await cnstr.rb_archive_create(slave)) {
+  //             case (#Err(#InvalidDestination r)) r;
+  //             case (#Err(#GenericError x)) return reunlock(#Err(#Async(#GenericError x)));
+  //             case (#Ok new_root) {
+  //               meta := Value.setPrincipal(meta, A.ROOT, ?new_root);
+  //               meta := Value.setPrincipal(meta, A.STANDBY, null);
+  //               #Add(actor (Principal.toText(slave)));
+  //             };
+  //           };
+  //         } catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+  //       };
+  //     };
+  //   };
+  //   for (b in batch.vals()) blocks := RBTree.delete(blocks, Nat.compare, b.id);
+  //   #Ok;
+  // };
+
+  // func createArchive(master : ?Principal) : async* Result.Type<Principal, Error.Generic> {
+  //   switch (Value.metaPrincipal(meta, A.STANDBY)) {
+  //     case (?standby) return try switch (await (actor (Principal.toText(standby)) : Archive.Canister).rb_archive_initialize(master)) {
+  //       case (#Err err) #Err err;
+  //       case _ #Ok standby;
+  //     } catch e #Err(Error.convert(e));
+  //     case _ ();
+  //   };
+  //   var archive_tcycles = Value.getNat(meta, A.MIN_TCYCLES, 0);
+  //   if (archive_tcycles < 3) archive_tcycles := 3;
+  //   if (archive_tcycles > 10) archive_tcycles := 10;
+  //   meta := Value.setNat(meta, A.MIN_TCYCLES, ?archive_tcycles);
+
+  //   let trillion = 10 ** 12;
+  //   let cost = archive_tcycles * trillion;
+  //   let reserve = 2 * trillion;
+  //   if (Cycles.balance() < cost + reserve) return Error.text("Insufficient cycles balance to create a new archive");
+
+  //   try {
+  //     let new_canister = await (with cycles = cost) Archive.Canister(master);
+  //     #Ok(Principal.fromActor(new_canister));
+  //   } catch e #Err(Error.convert(e));
+  // };
 };

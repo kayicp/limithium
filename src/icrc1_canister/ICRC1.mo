@@ -3,16 +3,19 @@ import Order "mo:base/Order";
 import Principal "mo:base/Principal";
 import Blob "mo:base/Blob";
 import Nat64 "mo:base/Nat64";
+import Nat "mo:base/Nat";
 import Management "../util/motoko/Management";
 import Value "../util/motoko/Value";
 import Result "../util/motoko/Result";
 import Time64 "../util/motoko/Time64";
 import Subaccount "../util/motoko/Subaccount";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
+import Option "../util/motoko/Option";
 
 module {
   public func validateAccount({ owner; subaccount } : I.Account) : Bool = if (Principal.isAnonymous(owner) or Principal.equal(owner, Management.principal()) or Principal.toBlob(owner).size() > 29) false else Subaccount.validate(subaccount);
 
+  // todo: dont do this?
   public func compareAccount(a : I.Account, b : I.Account) : Order.Order = switch (Principal.compare(a.owner, b.owner)) {
     case (#equal) Blob.compare(Subaccount.get(a.subaccount), Subaccount.get(b.subaccount));
     case other other;
@@ -56,16 +59,182 @@ module {
 
   public func saveApproval(spender : I.Approvals, sub : Blob, amount : Nat, expires_at : Nat64) : I.Approvals = if (amount > 0) RBTree.insert(spender, Blob.compare, sub, { allowance = amount; expires_at }) else RBTree.delete(spender, Blob.compare, sub);
 
-  public func dedupeTransfer((a_caller : Principal, a_arg : I.TransferArg), (b_caller : Principal, b_arg : I.TransferArg)) : Order.Order {
-    #equal;
+  public func dedupeTransfer((ap : Principal, a : I.TransferArg), (bp : Principal, b : I.TransferArg)) : Order.Order {
+    switch (Option.compare(a.created_at_time, b.created_at_time, Nat64.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.memo, b.memo, Blob.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Principal.compare(ap, bp)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Blob.compare(Subaccount.get(a.from_subaccount), Subaccount.get(b.from_subaccount))) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.fee, b.fee, Nat.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (compareAccount(a.to, b.to)) {
+      case (#equal) Nat.compare(a.amount, b.amount);
+      case other other;
+    };
   };
 
-  public func dedupeApprove((a_caller : Principal, a_arg : I.ApproveArg), (b_caller : Principal, b_arg : I.ApproveArg)) : Order.Order {
-    #equal;
+  public func dedupeApprove((ap : Principal, a : I.ApproveArg), (bp : Principal, b : I.ApproveArg)) : Order.Order {
+    switch (Option.compare(a.created_at_time, b.created_at_time, Nat64.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.memo, b.memo, Blob.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Principal.compare(ap, bp)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Blob.compare(Subaccount.get(a.from_subaccount), Subaccount.get(b.from_subaccount))) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.expected_allowance, b.expected_allowance, Nat.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.expires_at, b.expires_at, Nat64.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.fee, b.fee, Nat.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (compareAccount(a.spender, b.spender)) {
+      case (#equal) Nat.compare(a.amount, b.amount);
+      case other other;
+    };
   };
 
-  public func dedupeTransferFrom((a_caller : Principal, a_arg : I.TransferFromArg), (b_caller : Principal, b_arg : I.TransferFromArg)) : Order.Order {
-    #equal;
+  public func dedupeTransferFrom((ap : Principal, a : I.TransferFromArg), (bp : Principal, b : I.TransferFromArg)) : Order.Order {
+    switch (Option.compare(a.created_at_time, b.created_at_time, Nat64.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.memo, b.memo, Blob.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Principal.compare(ap, bp)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Blob.compare(Subaccount.get(a.spender_subaccount), Subaccount.get(b.spender_subaccount))) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.fee, b.fee, Nat.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (compareAccount(a.from, b.from)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (compareAccount(a.to, b.to)) {
+      case (#equal) Nat.compare(a.amount, b.amount);
+      case other other;
+    };
+  };
+
+  // todo: provide sub for all subaccounts to save space
+  public func valueTransfer(owner : Principal, a : I.TransferArg, mode : { #Burn; #Mint; #Transfer }, fee : Nat, now : Nat64, phash : ?Blob) : Value.Type {
+    var tx = RBTree.empty<Text, Value.Type>();
+    tx := Value.setNat(tx, "amt", ?a.amount);
+    tx := Value.setBlob(tx, "memo", a.memo);
+    switch (a.created_at_time) {
+      case (?t) tx := Value.setNat(tx, "ts", ?Nat64.toNat(t));
+      case _ ();
+    };
+    var map = RBTree.empty<Text, Value.Type>();
+    switch (a.fee) {
+      case (?found) if (found > 0) tx := Value.setNat(tx, "fee", ?found);
+      case _ if (fee > 0) map := Value.setNat(map, "fee", ?fee);
+    };
+    switch mode {
+      case (#Burn) {
+        map := Value.setText(map, "op", ?"burn");
+        tx := Value.setAccount(tx, "from", ?{ owner; subaccount = a.from_subaccount });
+      };
+      case (#Mint) {
+        map := Value.setText(map, "op", ?"mint");
+        tx := Value.setAccount(tx, "to", ?a.to);
+      };
+      case (#Transfer) {
+        map := Value.setText(map, "op", ?"xfer");
+        tx := Value.setAccount(tx, "from", ?{ owner; subaccount = a.from_subaccount });
+        tx := Value.setAccount(tx, "to", ?a.to);
+      };
+    };
+    map := Value.setNat(map, "ts", ?Nat64.toNat(now));
+    map := Value.setMap(map, "tx", tx);
+    map := Value.setBlob(map, "phash", phash);
+    #Map(RBTree.array(map));
+  };
+
+  public func valueApprove(owner : Principal, a : I.ApproveArg, fee : Nat, now : Nat64, phash : ?Blob) : Value.Type {
+    var tx = RBTree.empty<Text, Value.Type>();
+    tx := Value.setNat(tx, "amt", ?a.amount);
+    tx := Value.setBlob(tx, "memo", a.memo);
+    tx := Value.setAccount(tx, "from", ?{ owner; subaccount = a.from_subaccount });
+    tx := Value.setAccount(tx, "spender", ?a.spender);
+    tx := Value.setNat(tx, "expected_allowance", a.expected_allowance);
+    switch (a.expires_at) {
+      case (?found) tx := Value.setNat(tx, "expires_at", ?Nat64.toNat(found));
+      case _ ();
+    };
+    switch (a.created_at_time) {
+      case (?t) tx := Value.setNat(tx, "ts", ?Nat64.toNat(t));
+      case _ ();
+    };
+    var map = RBTree.empty<Text, Value.Type>();
+    switch (a.fee) {
+      case (?found) if (found > 0) tx := Value.setNat(tx, "fee", ?found);
+      case _ if (fee > 0) map := Value.setNat(map, "fee", ?fee);
+    };
+    map := Value.setText(map, "op", ?"approve");
+    map := Value.setNat(map, "ts", ?Nat64.toNat(now));
+    map := Value.setMap(map, "tx", tx);
+    map := Value.setBlob(map, "phash", phash);
+    #Map(RBTree.array(map));
+  };
+
+  public func valueTransferFrom(owner : Principal, a : I.TransferFromArg, fee : Nat, now : Nat64, phash : ?Blob) : Value.Type {
+    var tx = RBTree.empty<Text, Value.Type>();
+    tx := Value.setNat(tx, "amt", ?a.amount);
+    tx := Value.setBlob(tx, "memo", a.memo);
+    tx := Value.setAccount(tx, "spender", ?{ owner; subaccount = a.spender_subaccount });
+    tx := Value.setAccount(tx, "from", ?a.from);
+    tx := Value.setAccount(tx, "to", ?a.to);
+    switch (a.created_at_time) {
+      case (?t) tx := Value.setNat(tx, "ts", ?Nat64.toNat(t));
+      case _ ();
+    };
+    var map = RBTree.empty<Text, Value.Type>();
+    switch (a.fee) {
+      case (?found) if (found > 0) tx := Value.setNat(tx, "fee", ?found);
+      case _ if (fee > 0) map := Value.setNat(map, "fee", ?fee);
+    };
+    map := Value.setText(map, "op", ?"xfer");
+    map := Value.setNat(map, "ts", ?Nat64.toNat(now));
+    map := Value.setMap(map, "tx", tx);
+    map := Value.setBlob(map, "phash", phash);
+    #Map(RBTree.array(map));
   };
 
   public func getEnvironment(_meta : Value.Metadata) : Result.Type<I.Environment, Text> {
@@ -88,7 +257,30 @@ module {
       meta := Value.setNat(meta, I.MAX_MINT, ?max_mint);
     };
     let now = Time64.nanos();
-    #Ok { meta; minter; fee; now; max_mint; total_supply };
+    var tx_window = Nat64.fromNat(Value.getNat(meta, I.TX_WINDOW, 0));
+    let min_tx_window = Time64.MINUTES(15);
+    if (tx_window < min_tx_window) {
+      tx_window := min_tx_window;
+      meta := Value.setNat(meta, I.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+    };
+    var permitted_drift = Nat64.fromNat(Value.getNat(meta, I.PERMITTED_DRIFT, 0));
+    let min_permitted_drift = Time64.SECONDS(5);
+    if (permitted_drift < min_permitted_drift) {
+      permitted_drift := min_permitted_drift;
+      meta := Value.setNat(meta, I.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+    };
+    let dedupe_start = now - tx_window - permitted_drift;
+    let dedupe_end = now + permitted_drift;
+    #Ok {
+      meta;
+      minter;
+      fee;
+      now;
+      max_mint;
+      total_supply;
+      dedupe_start;
+      dedupe_end;
+    };
   };
 
   public func getExpiry(_meta : Value.Metadata, now : Nat64) : {

@@ -36,9 +36,7 @@ module {
   public func saveSubaccount(u : B.User, subacc_id : Blob, subacc : B.Subaccount) : B.User = ({
     u with subaccs = RBTree.insert(u.subaccs, Blob.compare, subacc_id, subacc)
   });
-  public func dedupePlace(_a : (Principal, B.PlaceArg), _b : (Principal, B.PlaceArg)) : Order.Order {
-    let (ap, a) = _a;
-    let (bp, b) = _b;
+  public func dedupePlace((ap : Principal, a : B.PlaceArg), (bp : Principal, b : B.PlaceArg)) : Order.Order {
     switch (Option.compare(a.created_at, b.created_at, Nat64.compare)) {
       case (#equal) ();
       case other return other;

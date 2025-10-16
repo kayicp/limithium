@@ -11,7 +11,6 @@ import Blob "mo:base/Blob";
 import Nat "mo:base/Nat";
 import Iter "mo:base/Iter";
 import Buffer "mo:base/Buffer";
-import Time64 "../util/motoko/Time64";
 import Vault "Vault";
 import Result "../util/motoko/Result";
 import Subaccount "../util/motoko/Subaccount";
@@ -35,6 +34,7 @@ shared (install) persistent actor class Canister(
   var tip_cert = MerkleTree.empty();
   func updateTipCert() = CertifiedData.set(MerkleTree.treeHash(tip_cert)); // also call this on deploy.init
   system func postupgrade() = updateTipCert(); // https://gist.github.com/nomeata/f325fcd2a6692df06e38adedf9ca1877
+
   var meta : Value.Metadata = RBTree.empty();
   var users : V.Users = RBTree.empty();
   var tokens = RBTree.empty<Principal, V.Token>();
@@ -86,7 +86,7 @@ shared (install) persistent actor class Canister(
       fee = ?fee;
       amount = xfer_amount;
       memo = null;
-      created_at = null;
+      created_at_time = null;
     };
     let xfer_id = switch (await token_canister.icrc2_transfer_from(xfer_arg)) {
       case (#Ok ok) ok;
@@ -167,7 +167,7 @@ shared (install) persistent actor class Canister(
       fee = ?xfer_fee;
       memo = null;
       from_subaccount = null;
-      created_at = null;
+      created_at_time = null;
     };
     let xfer_res = await token_canister.icrc1_transfer(xfer_arg);
     user := Vault.getUser(users, caller);
