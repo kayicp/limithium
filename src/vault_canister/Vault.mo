@@ -6,6 +6,9 @@ import Principal "mo:base/Principal";
 import Blob "mo:base/Blob";
 import Nat64 "mo:base/Nat64";
 import Value "../util/motoko/Value";
+import Result "../util/motoko/Result";
+import Error "../util/motoko/Error";
+import Time64 "../util/motoko/Time64";
 
 module {
   public func getBalance(s : V.Subaccount, token : Principal) : V.Balance = switch (RBTree.get(s, Principal.compare, token)) {
@@ -99,4 +102,27 @@ module {
   };
 
   public func dedupe(a : (Principal, V.TokenArg), b : (Principal, V.TokenArg)) : Order.Order = #equal; // todo: finish this, start with time;
+
+  public func getEnvironment(_meta : Value.Metadata) : Result.Type<V.Environment, Error.Generic> {
+    var meta = _meta;
+    let now = Time64.nanos();
+    var tx_window = Nat64.fromNat(Value.getNat(meta, V.TX_WINDOW, 0));
+    let min_tx_window = Time64.MINUTES(15);
+    if (tx_window < min_tx_window) {
+      tx_window := min_tx_window;
+      meta := Value.setNat(meta, V.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+    };
+    var permitted_drift = Nat64.fromNat(Value.getNat(meta, V.PERMITTED_DRIFT, 0));
+    let min_permitted_drift = Time64.SECONDS(5);
+    if (permitted_drift < min_permitted_drift) {
+      permitted_drift := min_permitted_drift;
+      meta := Value.setNat(meta, V.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+    };
+    #Ok {
+      meta;
+      now;
+      tx_window;
+      permitted_drift;
+    };
+  };
 };

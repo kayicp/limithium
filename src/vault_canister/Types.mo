@@ -2,6 +2,7 @@ import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Token "../icrc1_canister/Types";
+import Value "../util/motoko/Value";
 
 module {
   public let AVAILABLE = "vault:available";
@@ -97,5 +98,11 @@ module {
   };
   public type Actor = actor {
     vault_is_executor : shared Principal -> async Bool;
+  };
+  public type Environment = {
+    meta : Value.Metadata;
+    now : Nat64;
+    tx_window : Nat64;
+    permitted_drift : Nat64;
   };
 };

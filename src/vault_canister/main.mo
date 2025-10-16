@@ -16,12 +16,15 @@ import Vault "Vault";
 import Result "../util/motoko/Result";
 import Subaccount "../util/motoko/Subaccount";
 import A "../archive_canister/Types";
-import Archive "../archive_canister/Archive";
+import ArchiveL "../archive_canister/Archive";
+import Archive "../archive_canister/main";
 import LEB128 "mo:leb128";
 import MerkleTree "../util/motoko/MerkleTree";
 import CertifiedData "mo:base/CertifiedData";
 import Text "mo:base/Text";
 import ICRC3T "../util/motoko/ICRC-3/Types";
+import OptionX "../util/motoko/Option";
+import Cycles "mo:core/Cycles";
 
 shared (install) persistent actor class Canister(
   // deploy : {
@@ -67,8 +70,12 @@ shared (install) persistent actor class Canister(
     if (balance < xfer_and_fee) return #Err(#InsufficientBalance { balance });
     if (approval.allowance < xfer_and_fee) return #Err(#InsufficientAllowance approval);
 
-    let now = Time64.nanos();
-    switch (checkIdempotency(caller, #Deposit arg, now, arg.created_at)) {
+    let env = switch (Vault.getEnvironment(meta)) {
+      case (#Ok ok) ok;
+      case (#Err err) return #Err err;
+    };
+    meta := env.meta;
+    switch (checkIdempotency(caller, #Deposit arg, env, arg.created_at)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -94,9 +101,10 @@ shared (install) persistent actor class Canister(
     user := Vault.saveSubaccount(user, arg_subacc, subacc);
     users := Vault.saveUser(users, caller, user);
 
-    let (block_id, phash) = Archive.getPhash(blocks);
+    let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (arg.created_at != null) deposit_dedupes := RBTree.insert(deposit_dedupes, Vault.dedupe, (caller, arg), block_id);
-    newBlock(block_id, Vault.valueBasic("deposit", caller, arg_subacc, 0, arg, xfer_id, now, phash));
+    newBlock(block_id, Vault.valueBasic("deposit", caller, arg_subacc, 0, arg, xfer_id, env.now, phash));
+    await* trim(env);
     #Ok block_id;
   };
 
@@ -139,8 +147,12 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    let now = Time64.nanos();
-    switch (checkIdempotency(caller, #Withdraw arg, now, arg.created_at)) {
+    let env = switch (Vault.getEnvironment(meta)) {
+      case (#Ok ok) ok;
+      case (#Err err) return #Err err;
+    };
+    meta := env.meta;
+    switch (checkIdempotency(caller, #Withdraw arg, env, arg.created_at)) {
       case (#Err err) return #Err err;
       case _ ();
     };
@@ -183,9 +195,10 @@ shared (install) persistent actor class Canister(
     user := Vault.saveSubaccount(user, canister_subaccount, subacc);
     users := Vault.saveUser(users, this_canister, user);
 
-    let (block_id, phash) = Archive.getPhash(blocks);
+    let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (arg.created_at != null) withdraw_dedupes := RBTree.insert(withdraw_dedupes, Vault.dedupe, (caller, arg), block_id);
-    newBlock(block_id, Vault.valueBasic("withdraw", caller, arg_subacc, token.withdrawal_fee, arg, xfer_id, now, phash));
+    newBlock(block_id, Vault.valueBasic("withdraw", caller, arg_subacc, token.withdrawal_fee, arg, xfer_id, env.now, phash));
+    await* trim(env);
     #Ok block_id;
   };
 
@@ -198,6 +211,11 @@ shared (install) persistent actor class Canister(
       case (?found) found;
       case _ Vault.getUser(users, p);
     };
+    let env = switch (Vault.getEnvironment(meta)) {
+      case (#Ok ok) ok;
+      case (#Err err) return #Err err;
+    };
+    meta := env.meta;
     for (block_index in Iter.range(0, instruction_blocks.size() - 1)) {
       let instructions = instruction_blocks[block_index];
       if (instructions.size() == 0) return #Err(#EmptyInstructions { block_index });
@@ -251,12 +269,11 @@ shared (install) persistent actor class Canister(
     };
     for ((k, v) in RBTree.entries(lusers)) users := Vault.saveUser(users, k, v);
     let res = Buffer.Buffer<Nat>(instruction_blocks.size());
-    let now = Time64.nanos();
     for (b in Iter.range(0, instruction_blocks.size() - 1)) {
       let vals = Buffer.Buffer<Value.Type>(instruction_blocks[b].size());
       for (i in Iter.range(0, instruction_blocks[b].size() - 1)) vals.add(Vault.valueInstruction(instruction_blocks[b][i]));
-      let (block_id, phash) = Archive.getPhash(blocks);
-      newBlock(block_id, Vault.valueInstructions(caller, Buffer.toArray(vals), now, phash));
+      let (block_id, phash) = ArchiveL.getPhash(blocks);
+      newBlock(block_id, Vault.valueInstructions(caller, Buffer.toArray(vals), env.now, phash));
       res.add(block_id);
     };
     #Ok(Buffer.toArray(res));
@@ -281,34 +298,21 @@ shared (install) persistent actor class Canister(
     };
     case _ #Ok;
   };
-  func checkIdempotency(caller : Principal, opr : V.ArgType, now : Nat64, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
-    var tx_window = Nat64.fromNat(Value.getNat(meta, V.TX_WINDOW, 0));
-    let min_tx_window = Time64.MINUTES(15);
-    if (tx_window < min_tx_window) {
-      tx_window := min_tx_window;
-      meta := Value.setNat(meta, V.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+  func checkIdempotency(caller : Principal, opr : V.ArgType, env : V.Environment, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
+    let ct = switch (created_at) {
+      case (?defined) defined;
+      case _ return #Ok;
     };
-    var permitted_drift = Nat64.fromNat(Value.getNat(meta, V.PERMITTED_DRIFT, 0));
-    let min_permitted_drift = Time64.SECONDS(5);
-    if (permitted_drift < min_permitted_drift) {
-      permitted_drift := min_permitted_drift;
-      meta := Value.setNat(meta, V.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+    let start_time = env.now - env.tx_window - env.permitted_drift;
+    if (ct < start_time) return #Err(#TooOld);
+    let end_time = env.now + env.permitted_drift;
+    if (ct > end_time) return #Err(#CreatedInFuture { ledger_time = env.now });
+    let (map, arg) = switch opr {
+      case (#Deposit depo) (deposit_dedupes, depo);
+      case (#Withdraw draw) (withdraw_dedupes, draw);
     };
-    switch (created_at) {
-      case (?created_time) {
-        let start_time = now - tx_window - permitted_drift;
-        if (created_time < start_time) return #Err(#TooOld);
-        let end_time = now + permitted_drift;
-        if (created_time > end_time) return #Err(#CreatedInFuture { ledger_time = now });
-        let (map, comparer, arg) = switch opr {
-          case (#Deposit depo) (deposit_dedupes, Vault.dedupe, depo);
-          case (#Withdraw draw) (withdraw_dedupes, Vault.dedupe, draw);
-        };
-        switch (RBTree.get(map, comparer, (caller, arg))) {
-          case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
-          case _ #Ok;
-        };
-      };
+    switch (RBTree.get(map, Vault.dedupe, (caller, arg))) {
+      case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
       case _ #Ok;
     };
   };
@@ -398,8 +402,135 @@ shared (install) persistent actor class Canister(
     Buffer.toArray(res);
   };
 
-  // todo: trim dedupe, archive
-  func trim() {
+  func trim(env : V.Environment) : async* () {
+    var round = 0;
+    var max_round = 100;
+    let start_time = env.now - env.tx_window - env.permitted_drift;
+    label trimming while (round < max_round) {
+      let (p, arg) = switch (RBTree.minKey(deposit_dedupes)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      round += 1;
+      switch (OptionX.compare(arg.created_at, ?start_time, Nat64.compare)) {
+        case (#less) deposit_dedupes := RBTree.delete(deposit_dedupes, Vault.dedupe, (p, arg));
+        case _ break trimming;
+      };
+    };
+    label trimming while (round < max_round) {
+      let (p, arg) = switch (RBTree.minKey(withdraw_dedupes)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      round += 1;
+      switch (OptionX.compare(arg.created_at, ?start_time, Nat64.compare)) {
+        case (#less) withdraw_dedupes := RBTree.delete(withdraw_dedupes, Vault.dedupe, (p, arg));
+        case _ break trimming;
+      };
+    };
+    if (round <= max_round) ignore await* sendBlock();
+  };
 
+  func sendBlock() : async* Result.Type<(), { #Sync : Error.Generic; #Async : Error.Generic }> {
+    var max_batch = Value.getNat(meta, A.MAX_UPDATE_BATCH_SIZE, 0);
+    if (max_batch == 0) max_batch := 1;
+    if (max_batch > 100) max_batch := 100;
+    meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?max_batch);
+
+    if (RBTree.size(blocks) <= max_batch) return #Err(#Sync(Error.generic("Not enough blocks to archive", 0)));
+    var locks = RBTree.empty<Nat, A.Block>();
+    let batch_buff = Buffer.Buffer<ICRC3T.BlockResult>(max_batch);
+    label collecting for ((b_id, b) in RBTree.entries(blocks)) {
+      if (b.locked) return #Err(#Sync(Error.generic("Some blocks are locked for archiving", 0)));
+      locks := RBTree.insert(locks, Nat.compare, b_id, b);
+      batch_buff.add({ id = b_id; block = b.val });
+      if (batch_buff.size() >= max_batch) break collecting;
+    };
+    for ((b_id, b) in RBTree.entries(locks)) blocks := RBTree.insert(blocks, Nat.compare, b_id, { b with locked = true });
+    func reunlock<T>(t : T) : T {
+      for ((b_id, b) in RBTree.entries(locks)) blocks := RBTree.insert(blocks, Nat.compare, b_id, { b with locked = false });
+      t;
+    };
+    let root = switch (Value.metaPrincipal(meta, A.ROOT)) {
+      case (?exist) exist;
+      case _ switch (await* createArchive(null)) {
+        case (#Ok created) created;
+        case (#Err err) return reunlock(#Err(#Async(err)));
+      };
+    };
+    let batch = Buffer.toArray(batch_buff);
+    let start = batch[0].id;
+    var prev_redir : A.Redirect = #Ask(actor (Principal.toText(root)));
+    var curr_redir = prev_redir;
+    var next_redir = try await (actor (Principal.toText(root)) : Archive.Canister).rb_archive_ask(start) catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+
+    label travelling while true {
+      switch (ArchiveL.validateSequence(prev_redir, curr_redir, next_redir)) {
+        case (#Err msg) return reunlock(#Err(#Async(Error.generic(msg, 0))));
+        case _ ();
+      };
+      prev_redir := curr_redir;
+      curr_redir := next_redir;
+      next_redir := switch next_redir {
+        case (#Ask cnstr) try await cnstr.rb_archive_ask(start) catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+        case (#Add cnstr) {
+          let cnstr_id = Principal.fromActor(cnstr);
+          try {
+            switch (await cnstr.rb_archive_add(batch)) {
+              case (#Err(#InvalidDestination r)) r;
+              case (#Err(#UnexpectedBlock x)) return reunlock(#Err(#Async(Error.generic("UnexpectedBlock: " # debug_show x, 0))));
+              case (#Err(#MinimumBlockViolation x)) return reunlock(#Err(#Async(Error.generic("MinimumBlockViolation: " # debug_show x, 0))));
+              case (#Err(#BatchTooLarge x)) return reunlock(#Err(#Async(Error.generic("BatchTooLarge: " # debug_show x, 0))));
+              case (#Err(#GenericError x)) return reunlock(#Err(#Async(#GenericError x)));
+              case (#Ok) break travelling;
+            };
+          } catch ee #Create(actor (Principal.toText(cnstr_id)));
+        };
+        case (#Create cnstr) {
+          let cnstr_id = Principal.fromActor(cnstr);
+          try {
+            let slave = switch (await* createArchive(?cnstr_id)) {
+              case (#Err err) return reunlock(#Err(#Async(err)));
+              case (#Ok created) created;
+            };
+            switch (await cnstr.rb_archive_create(slave)) {
+              case (#Err(#InvalidDestination r)) r;
+              case (#Err(#GenericError x)) return reunlock(#Err(#Async(#GenericError x)));
+              case (#Ok new_root) {
+                meta := Value.setPrincipal(meta, A.ROOT, ?new_root);
+                meta := Value.setPrincipal(meta, A.STANDBY, null);
+                #Add(actor (Principal.toText(slave)));
+              };
+            };
+          } catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+        };
+      };
+    };
+    for (b in batch.vals()) blocks := RBTree.delete(blocks, Nat.compare, b.id);
+    #Ok;
+  };
+
+  func createArchive(master : ?Principal) : async* Result.Type<Principal, Error.Generic> {
+    switch (Value.metaPrincipal(meta, A.STANDBY)) {
+      case (?standby) return try switch (await (actor (Principal.toText(standby)) : Archive.Canister).rb_archive_initialize(master)) {
+        case (#Err err) #Err err;
+        case _ #Ok standby;
+      } catch e #Err(Error.convert(e));
+      case _ ();
+    };
+    var archive_tcycles = Value.getNat(meta, A.MIN_TCYCLES, 0);
+    if (archive_tcycles < 3) archive_tcycles := 3;
+    if (archive_tcycles > 10) archive_tcycles := 10;
+    meta := Value.setNat(meta, A.MIN_TCYCLES, ?archive_tcycles);
+
+    let trillion = 10 ** 12;
+    let cost = archive_tcycles * trillion;
+    let reserve = 2 * trillion;
+    if (Cycles.balance() < cost + reserve) return Error.text("Insufficient cycles balance to create a new archive");
+
+    try {
+      let new_canister = await (with cycles = cost) Archive.Canister(master);
+      #Ok(Principal.fromActor(new_canister));
+    } catch e #Err(Error.convert(e));
   };
 };
