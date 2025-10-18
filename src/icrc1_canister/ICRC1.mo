@@ -187,17 +187,14 @@ module {
     #Map(RBTree.array(map));
   };
 
-  public func valueApprove(owner : Principal, a : I.ApproveArg, fee : Nat, now : Nat64, phash : ?Blob) : Value.Type {
+  public func valueApprove(owner : Principal, a : I.ApproveArg, expires_at : Nat64, fee : Nat, now : Nat64, phash : ?Blob) : Value.Type {
     var tx = RBTree.empty<Text, Value.Type>();
     tx := Value.setNat(tx, "amt", ?a.amount);
     tx := Value.setBlob(tx, "memo", a.memo);
     tx := Value.setAccount(tx, "from", ?{ owner; subaccount = a.from_subaccount });
     tx := Value.setAccount(tx, "spender", ?a.spender);
     tx := Value.setNat(tx, "expected_allowance", a.expected_allowance);
-    switch (a.expires_at) {
-      case (?found) tx := Value.setNat(tx, "expires_at", ?Nat64.toNat(found));
-      case _ ();
-    };
+    tx := Value.setNat(tx, "expires_at", ?Nat64.toNat(expires_at));
     switch (a.created_at_time) {
       case (?t) tx := Value.setNat(tx, "ts", ?Nat64.toNat(t));
       case _ ();
@@ -295,5 +292,29 @@ module {
       meta := Value.setNat(meta, I.MAX_APPROVAL_EXPIRY, ?(Nat64.toNat(highest_max_expiry / 1_000_000_000))); // save seconds
     };
     { meta; max = now + max_expiry };
+  };
+
+  public func newExpiry(appr_exps : I.Expiries, t : Nat64, owner : Principal, o_sub : Blob, spender : Principal, s_sub : Blob) : I.Expiries {
+    var ts = switch (RBTree.get(appr_exps, Nat64.compare, t)) {
+      case (?found) found;
+      case _ RBTree.empty();
+    };
+    var os = switch (RBTree.get(ts, Principal.compare, owner)) {
+      case (?found) found;
+      case _ RBTree.empty();
+    };
+    var oss = switch (RBTree.get(os, Blob.compare, o_sub)) {
+      case (?found) found;
+      case _ RBTree.empty();
+    };
+    var sps = switch (RBTree.get(oss, Principal.compare, spender)) {
+      case (?found) found;
+      case _ RBTree.empty();
+    };
+    sps := RBTree.insert(sps, Blob.compare, s_sub, ());
+    oss := RBTree.insert(oss, Principal.compare, spender, sps);
+    os := RBTree.insert(os, Blob.compare, o_sub, oss);
+    ts := RBTree.insert(ts, Principal.compare, owner, os);
+    RBTree.insert(appr_exps, Nat64.compare, t, ts);
   };
 };

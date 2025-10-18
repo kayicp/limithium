@@ -68,18 +68,15 @@ module {
     sell : SellHand;
     buy : BuyHand;
     at : Nat64;
-    price : Nat;
     block : Nat;
   };
   public type CloseReason = {
     #FullyFilled;
     #AlmostFilled : ?{ block : Nat; execute : Nat };
     #Expired : ?{ block : Nat; execute : Nat };
-    #Canceled : ?{ block : Nat; execute : Nat };
+    #Canceled : ?{ block : Nat; execute : Nat }; // called by owner
   };
   public type Closed = {
-    caller : Principal;
-    sub : Blob;
     at : Nat64;
     reason : CloseReason;
   };
@@ -97,16 +94,14 @@ module {
     trades : Nats;
   };
   public type Subaccount = {
-    orders : Nats;
-    // note: cant place order on same price
-    sells : RBTree.Type<(price : Nat), (order : Nat)>;
+    buys : Nats; // time-sort, only remove when exceeds ttl
+    sells : Nats;
+    sell_lvls : RBTree.Type<(price : Nat), (order : Nat)>; // price-sort, cant place order on same price, remove once closed so can be placed again on the same price
+    buy_lvls : RBTree.Type<(price : Nat), (order : Nat)>;
     base : Amount;
-    buys : RBTree.Type<(price : Nat), (order : Nat)>;
     quote : Amount;
   };
-  public type User = {
-    subaccs : RBTree.Type<Blob, Subaccount>;
-  };
+  public type User = RBTree.Type<Blob, Subaccount>;
   public type Users = RBTree.Type<Principal, User>;
   type OrderArg = {
     price : Nat;

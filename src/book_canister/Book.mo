@@ -23,19 +23,19 @@ module {
     locked = 0;
     filled = 0;
   };
-  public func getSubaccount(u : B.User, subacc_id : Blob) : B.Subaccount = switch (RBTree.get(u.subaccs, Blob.compare, subacc_id)) {
+  public func getSubaccount(u : B.User, subacc_id : Blob) : B.Subaccount = switch (RBTree.get(u, Blob.compare, subacc_id)) {
     case (?found) found;
     case _ ({
-      orders = RBTree.empty();
       sells = RBTree.empty();
+      sell_lvls = RBTree.empty();
       base = newAmount(0);
       buys = RBTree.empty();
+      buy_lvls = RBTree.empty();
       quote = newAmount(0);
     });
   };
-  public func saveSubaccount(u : B.User, subacc_id : Blob, subacc : B.Subaccount) : B.User = ({
-    u with subaccs = RBTree.insert(u.subaccs, Blob.compare, subacc_id, subacc)
-  });
+  public func saveSubaccount(u : B.User, subacc_id : Blob, subacc : B.Subaccount) : B.User = RBTree.insert(u, Blob.compare, subacc_id, subacc);
+
   public func dedupePlace((ap : Principal, a : B.PlaceArg), (bp : Principal, b : B.PlaceArg)) : Order.Order {
     switch (Option.compare(a.created_at, b.created_at, Nat64.compare)) {
       case (#equal) ();
@@ -166,24 +166,29 @@ module {
     RBTree.insert(b, Nat.compare, price, p);
   } else RBTree.delete(b, Nat.compare, price);
 
-  public func subaccNewOrder(s : B.Subaccount, oid : Nat) : B.Subaccount = {
-    s with orders = RBTree.insert(s.orders, Nat.compare, oid, ())
+  public func subaccNewBuy(s : B.Subaccount, oid : Nat) : B.Subaccount = {
+    s with buys = RBTree.insert(s.buys, Nat.compare, oid, ())
   };
-  public func subaccDelOrder(s : B.Subaccount, oid : Nat) : B.Subaccount = {
-    s with orders = RBTree.delete(s.orders, Nat.compare, oid);
+  public func subaccNewSell(s : B.Subaccount, oid : Nat) : B.Subaccount = {
+    s with sells = RBTree.insert(s.sells, Nat.compare, oid, ());
   };
-
-  public func subaccNewSell(s : B.Subaccount, oid : Nat, o : B.Order) : B.Subaccount = ({
-    s with sells = RBTree.insert(s.sells, Nat.compare, o.price, oid);
+  public func subaccDelSell(s : B.Subaccount, oid : Nat) : B.Subaccount = ({
+    s with sells = RBTree.delete(s.sells, Nat.compare, oid);
   });
-  public func subaccNewBuy(s : B.Subaccount, oid : Nat, o : B.Order) : B.Subaccount = ({
-    s with buys = RBTree.insert(s.buys, Nat.compare, o.price, oid);
+  public func subaccDelBuy(s : B.Subaccount, oid : Nat) : B.Subaccount = ({
+    s with buys = RBTree.delete(s.buys, Nat.compare, oid);
   });
-  public func subaccDelSell(s : B.Subaccount, o : B.Order) : B.Subaccount = ({
-    s with sells = RBTree.delete(s.sells, Nat.compare, o.price);
+  public func subaccNewSellLevel(s : B.Subaccount, oid : Nat, { price : Nat }) : B.Subaccount = ({
+    s with sell_lvls = RBTree.insert(s.sell_lvls, Nat.compare, price, oid);
   });
-  public func subaccDelBuy(s : B.Subaccount, o : B.Order) : B.Subaccount = ({
-    s with buys = RBTree.delete(s.buys, Nat.compare, o.price);
+  public func subaccNewBuyLevel(s : B.Subaccount, oid : Nat, { price : Nat }) : B.Subaccount = ({
+    s with buy_lvls = RBTree.insert(s.buy_lvls, Nat.compare, price, oid);
+  });
+  public func subaccDelSellLevel(s : B.Subaccount, { price : Nat }) : B.Subaccount = ({
+    s with sell_lvls = RBTree.delete(s.sell_lvls, Nat.compare, price);
+  });
+  public func subaccDelBuyLevel(s : B.Subaccount, { price : Nat }) : B.Subaccount = ({
+    s with buy_lvls = RBTree.delete(s.buy_lvls, Nat.compare, price);
   });
   public func subaccIncQuote(s : B.Subaccount, q : B.Amount) : B.Subaccount = {
     s with quote = incAmount(s.quote, q);
@@ -326,7 +331,6 @@ module {
     map := Value.setBlob(map, "phash", phash);
     #Map(RBTree.array(map));
   };
-
   public func getEnvironment(_meta : Value.Metadata) : async* Result.Type<B.Environment, Error.Generic> {
     var meta = _meta;
     let vault = switch (Value.metaPrincipal(meta, B.VAULT)) {

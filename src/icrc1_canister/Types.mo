@@ -14,6 +14,7 @@ module {
   public let MAX_APPROVAL_EXPIRY = "icrc1:max_approval_expiry";
   public let MIN_APPROVAL_EXPIRY = "icrc1:min_approval_expiry";
   public let DEFAULT_APPROVAL_EXPIRY = "icrc1:default_approval_expiry";
+  public let AVAILABLE = "xlt:available";
   public let VAULT = "xlt:vault";
   public let MAX_UPDATE_BATCH = "xlt:max_update_batch_size";
   public let MAX_MINT = "xlt:max_mint_per_round";
@@ -27,6 +28,7 @@ module {
   };
   public type Subaccounts = RBTree.Type<Blob, Subaccount>;
   public type Users = RBTree.Type<Principal, Subaccounts>;
+  public type Expiries = RBTree.Type<Nat64, RBTree.Type<Principal, RBTree.Type<Blob, RBTree.Type<Principal, RBTree.Type<Blob, ()>>>>>;
 
   public type TransferError = {
     #GenericError : Error.Type;

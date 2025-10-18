@@ -141,8 +141,8 @@ shared (install) persistent actor class Canister(
     let sub = Subaccount.get(arg.subaccount);
     var subacc = Book.getSubaccount(user, sub);
 
-    let min_gsell = RBTree.min(subacc.sells);
-    let max_gbuy = RBTree.max(subacc.buys);
+    let min_gsell = RBTree.min(subacc.sell_lvls);
+    let max_gbuy = RBTree.max(subacc.buy_lvls);
     switch (min_lsell, max_gbuy) {
       case (?(lsell_price, lsell), ?(gbuy_price, gbuy)) if (lsell_price <= gbuy_price) return #Err(#PriceTooLow { lsell with minimum_price = gbuy_price });
       case _ ();
@@ -151,11 +151,11 @@ shared (install) persistent actor class Canister(
       case (?(lbuy_price, lbuy), ?(gsell_price, gsell)) if (lbuy_price >= gsell_price) return #Err(#PriceTooHigh { lbuy with maximum_price = gsell_price });
       case _ ();
     };
-    for ((lsell_price, lsell) in RBTree.entries(lsells)) switch (RBTree.get(subacc.sells, Nat.compare, lsell_price)) {
+    for ((lsell_price, lsell) in RBTree.entries(lsells)) switch (RBTree.get(subacc.sell_lvls, Nat.compare, lsell_price)) {
       case (?found) return #Err(#PriceUnavailable { lsell with order_id = found });
       case _ ();
     };
-    for ((lbuy_price, lbuy) in RBTree.entries(lbuys)) switch (RBTree.get(subacc.buys, Nat.compare, lbuy_price)) {
+    for ((lbuy_price, lbuy) in RBTree.entries(lbuys)) switch (RBTree.get(subacc.buy_lvls, Nat.compare, lbuy_price)) {
       case (?found) return #Err(#PriceUnavailable { lbuy with order_id = found });
       case _ ();
     };
@@ -187,7 +187,6 @@ shared (install) persistent actor class Canister(
       orders := RBTree.insert(orders, Nat.compare, order_id, new_order);
       oids.add(order_id);
       ovalues.add(Book.valueOpen(order_id, new_order));
-      subacc := Book.subaccNewOrder(subacc, order_id);
 
       orders_by_expiry := Book.newExpiry(orders_by_expiry, o.expiry, order_id);
       new_order;
@@ -198,7 +197,8 @@ shared (install) persistent actor class Canister(
       price := Book.levelNewOrder(price, order_id);
       price := Book.levelIncAmount(price, new_order.base);
       sell_book := Book.saveLevel(sell_book, o_price, price);
-      subacc := Book.subaccNewSell(subacc, order_id, new_order);
+      subacc := Book.subaccNewSell(subacc, order_id);
+      subacc := Book.subaccNewSellLevel(subacc, order_id, new_order);
       subacc := Book.subaccIncBase(subacc, new_order.base);
       order_id += 1;
     };
@@ -208,7 +208,8 @@ shared (install) persistent actor class Canister(
       price := Book.levelNewOrder(price, order_id);
       price := Book.levelIncAmount(price, new_order.base);
       buy_book := Book.saveLevel(buy_book, o_price, price);
-      subacc := Book.subaccNewBuy(subacc, order_id, new_order);
+      subacc := Book.subaccNewBuy(subacc, order_id);
+      subacc := Book.subaccNewBuyLevel(subacc, order_id, new_order);
       subacc := Book.subaccIncQuote(subacc, Book.mulAmount(new_order.base, new_order.price));
       order_id += 1;
     };
@@ -306,10 +307,10 @@ shared (install) persistent actor class Canister(
         };
         let instruction_index = refunds_buff.size();
         refunds_buff.add(instructions);
-        o := { o with closed = ?{ caller; sub; reason; at = env.now } };
+        o := { o with closed = ?{ reason; at = env.now } };
         refundables := RBTree.insert(refundables, Nat.compare, oid, { index; data = o; reason; instruction_index });
       } else {
-        let closed = ?{ caller; sub; reason = #FullyFilled; at = env.now };
+        let closed = ?{ reason = #FullyFilled; at = env.now };
         o := { o with closed };
         fulls := RBTree.insert(fulls, Nat.compare, oid, { index; data = o });
       };
@@ -327,7 +328,7 @@ shared (install) persistent actor class Canister(
     if (RBTree.size(fulls) > 0) {
       for ((oid, o) in RBTree.entries(fulls)) {
         orders := RBTree.insert(orders, Nat.compare, oid, o.data);
-        subacc := if (o.data.is_buy) {
+        if (o.data.is_buy) {
           var pr = Book.getLevel(buy_book, o.data.price);
           pr := Book.levelDecAmount(pr, o.data.base);
           pr := Book.levelDelOrder(pr, oid);
@@ -335,7 +336,8 @@ shared (install) persistent actor class Canister(
 
           let o_quote = Book.mulAmount(o.data.base, o.data.price);
           quote := Book.decAmount(quote, o_quote);
-          Book.subaccDecQuote(subacc, o_quote);
+          subacc := Book.subaccDelBuyLevel(subacc, o.data);
+          subacc := Book.subaccDecQuote(subacc, o_quote);
         } else {
           var pr = Book.getLevel(sell_book, o.data.price);
           pr := Book.levelDecAmount(pr, o.data.base);
@@ -343,7 +345,8 @@ shared (install) persistent actor class Canister(
           sell_book := Book.saveLevel(sell_book, o.data.price, pr);
 
           base := Book.decAmount(base, o.data.base);
-          Book.subaccDecBase(subacc, o.data.base);
+          subacc := Book.subaccDelSellLevel(subacc, o.data);
+          subacc := Book.subaccDecBase(subacc, o.data.base);
         };
         orders_by_expiry := Book.delExpiry(orders_by_expiry, o.data.expires_at, oid);
         orders_by_expiry := Book.newExpiry(orders_by_expiry, o.data.expires_at + env.ttl, oid);
@@ -422,6 +425,7 @@ shared (install) persistent actor class Canister(
         let o_quote = Book.mulAmount(o.data.base, o.data.price);
         quote := Book.decAmount(quote, o_quote);
         subacc := Book.subaccDecQuote(subacc, o_quote);
+        subacc := Book.subaccDelBuyLevel(subacc, o.data);
         let fee = if (o.reason == #Canceled null) fee_quote else 0;
         ovalues.add(Book.valueClose(oid, "quote", o_quote.locked, fee, execute));
       } else {
@@ -431,6 +435,7 @@ shared (install) persistent actor class Canister(
         sell_book := Book.saveLevel(sell_book, o.data.price, pr);
         base := Book.decAmount(base, o.data.base);
         subacc := Book.subaccDecBase(subacc, o.data.base);
+        subacc := Book.subaccDelSellLevel(subacc, o.data);
         let fee = if (o.reason == #Canceled null) fee_base else 0;
         ovalues.add(Book.valueClose(oid, "base", o.data.base.locked, fee, execute));
       };
@@ -443,7 +448,7 @@ shared (install) persistent actor class Canister(
         case (#Canceled _) #Canceled proof;
         case (#Expired _) #Expired proof;
       };
-      let closed = ?{ caller; sub; at = env.now; reason };
+      let closed = ?{ at = env.now; reason };
       var order = Book.unlockOrder(o.data, o.data.base.locked);
       order := { order with closed };
       orders := RBTree.insert(orders, Nat.compare, oid, order);
@@ -459,7 +464,7 @@ shared (install) persistent actor class Canister(
 
   func getUser(p : Principal) : B.User = switch (RBTree.get(users, Principal.compare, p)) {
     case (?found) found;
-    case _ ({ subaccs = RBTree.empty() });
+    case _ RBTree.empty();
   };
   func saveUser(p : Principal, u : B.User) : B.User {
     users := RBTree.insert(users, Principal.compare, p, u);
@@ -553,14 +558,14 @@ shared (install) persistent actor class Canister(
       };
       var user = getUser(o.owner);
       var subacc = Book.getSubaccount(user, o.sub);
-      subacc := Book.subaccNewOrder(subacc, oid);
       if (is_open) {
         if (o.is_buy) {
           var pr = Book.getLevel(buy_book, o.price);
           pr := Book.levelNewOrder(pr, oid);
           pr := Book.levelIncAmount(pr, o.base);
           buy_book := Book.saveLevel(buy_book, o.price, pr);
-          subacc := Book.subaccNewBuy(subacc, oid, o);
+          subacc := Book.subaccNewBuy(subacc, oid);
+          subacc := Book.subaccNewBuyLevel(subacc, oid, o);
           let o_quote = Book.mulAmount(o.base, o.price);
           subacc := Book.subaccIncQuote(subacc, o_quote);
           quote := Book.incAmount(quote, o_quote);
@@ -569,7 +574,8 @@ shared (install) persistent actor class Canister(
           pr := Book.levelNewOrder(pr, oid);
           pr := Book.levelIncAmount(pr, o.base);
           sell_book := Book.saveLevel(sell_book, o.price, pr);
-          subacc := Book.subaccNewSell(subacc, oid, o);
+          subacc := Book.subaccNewSell(subacc, oid);
+          subacc := Book.subaccNewSellLevel(subacc, oid, o);
           subacc := Book.subaccIncBase(subacc, o.base);
           base := Book.incAmount(base, o.base);
         };
@@ -627,7 +633,7 @@ shared (install) persistent actor class Canister(
         if (is_open) {
           if (o.base.locked > 0) break trimming;
           if (o.base.filled >= o.base.initial) {
-            let closed = ?{ caller; sub; reason = #FullyFilled; at = env.now };
+            let closed = ?{ reason = #FullyFilled; at = env.now };
             o := { o with closed };
             orders := RBTree.insert(orders, Nat.compare, id, o);
 
@@ -639,17 +645,19 @@ shared (install) persistent actor class Canister(
               lvl := Book.levelDelOrder(lvl, id);
               buy_book := Book.saveLevel(buy_book, o.price, lvl);
 
-              base := Book.decAmount(base, o.base);
-              subacc := Book.subaccDecBase(subacc, o.base);
+              let o_quote = Book.mulAmount(o.base, o.price);
+              quote := Book.decAmount(base, o_quote);
+              subacc := Book.subaccDecQuote(subacc, o_quote);
+              subacc := Book.subaccDelBuyLevel(subacc, o);
             } else {
               var lvl = Book.getLevel(sell_book, o.price);
               lvl := Book.levelDecAmount(lvl, o.base);
               lvl := Book.levelDelOrder(lvl, id);
               sell_book := Book.saveLevel(sell_book, o.price, lvl);
 
-              let o_quote = Book.mulAmount(o.base, o.price);
-              quote := Book.decAmount(base, o_quote);
-              subacc := Book.subaccDecQuote(subacc, o_quote);
+              base := Book.decAmount(base, o.base);
+              subacc := Book.subaccDecBase(subacc, o.base);
+              subacc := Book.subaccDelSellLevel(subacc, o);
             };
             user := Book.saveSubaccount(user, o.sub, subacc);
             user := saveUser(o.owner, user);
@@ -669,8 +677,13 @@ shared (install) persistent actor class Canister(
             orders := RBTree.delete(orders, Nat.compare, id);
             var user = getUser(o.owner);
             var subacc = Book.getSubaccount(user, o.sub);
-            subacc := Book.subaccDelOrder(subacc, id);
-            subacc := if (o.is_buy) Book.subaccDelBuy(subacc, o) else Book.subaccDelSell(subacc, o);
+            if (o.is_buy) {
+              subacc := Book.subaccDelBuy(subacc, id);
+              subacc := Book.subaccDelBuyLevel(subacc, o);
+            } else {
+              subacc := Book.subaccDelSell(subacc, id);
+              subacc := Book.subaccDelSellLevel(subacc, o);
+            };
             user := Book.saveSubaccount(user, o.sub, subacc);
             user := saveUser(o.owner, user);
             continue trimming; // delete from ttl
@@ -993,6 +1006,7 @@ shared (install) persistent actor class Canister(
               var user = getUser(sell_o.owner);
               var subacc = Book.getSubaccount(user, sell_o.sub);
               subacc := Book.subaccDecBase(subacc, sell_o.base);
+              subacc := Book.subaccDelSellLevel(subacc, sell_o);
               user := Book.saveSubaccount(user, sell_o.sub, subacc);
               user := saveUser(sell_o.owner, user);
             };
@@ -1014,6 +1028,7 @@ shared (install) persistent actor class Canister(
               var user = getUser(buy_o.owner);
               var subacc = Book.getSubaccount(user, buy_o.sub);
               subacc := Book.subaccDecQuote(subacc, o_quote);
+              subacc := Book.subaccDelBuyLevel(subacc, buy_o);
               user := Book.saveSubaccount(user, buy_o.sub, subacc);
               user := saveUser(buy_o.owner, user);
             };
@@ -1031,7 +1046,7 @@ shared (install) persistent actor class Canister(
           continue timing;
         };
         if (sell_o.base.filled >= sell_o.base.initial) {
-          let closed = ?{ caller; sub; reason = #FullyFilled; at = env.now };
+          let closed = ?{ reason = #FullyFilled; at = env.now };
           sell_o := { sell_o with closed };
           orders := RBTree.insert(orders, Nat.compare, sell_id, sell_o);
 
@@ -1044,6 +1059,7 @@ shared (install) persistent actor class Canister(
           var user = getUser(sell_o.owner);
           var subacc = Book.getSubaccount(user, sell_o.sub);
           subacc := Book.subaccDecBase(subacc, sell_o.base);
+          subacc := Book.subaccDelSellLevel(subacc, sell_o);
           user := Book.saveSubaccount(user, sell_o.sub, subacc);
           user := saveUser(sell_o.owner, user);
 
@@ -1054,7 +1070,7 @@ shared (install) persistent actor class Canister(
           continue timing;
         };
         if (buy_o.base.filled >= buy_o.base.initial) {
-          let closed = ?{ caller; sub; reason = #FullyFilled; at = env.now };
+          let closed = ?{ reason = #FullyFilled; at = env.now };
           buy_o := { buy_o with closed };
           orders := RBTree.insert(orders, Nat.compare, buy_id, buy_o);
 
@@ -1067,7 +1083,8 @@ shared (install) persistent actor class Canister(
 
           var user = getUser(buy_o.owner);
           var subacc = Book.getSubaccount(user, buy_o.sub);
-          subacc := Book.subaccDecBase(subacc, buy_o.base);
+          subacc := Book.subaccDecQuote(subacc, o_quote);
+          subacc := Book.subaccDelBuyLevel(subacc, buy_o);
           user := Book.saveSubaccount(user, buy_o.sub, subacc);
           user := saveUser(buy_o.owner, user);
 
@@ -1243,7 +1260,7 @@ shared (install) persistent actor class Canister(
 
   func refundClose(caller : Principal, sub : Blob, env : B.Environment, reason : { #Expired : Null; #AlmostFilled : Null }, oid : Nat, _o : B.Order, unfilled : Nat, _lvl : B.Price, unfilled_q : Nat) : async* B.RunRes {
     var o = _o;
-    o := { o with closed = ?{ caller; sub; reason; at = env.now } };
+    o := { o with closed = ?{ reason; at = env.now } };
     o := Book.lockOrder(o, unfilled);
     orders := RBTree.insert(orders, Nat.compare, oid, o);
 
@@ -1306,6 +1323,7 @@ shared (install) persistent actor class Canister(
       let o_quote = Book.mulAmount(o.base, o.price);
       quote := Book.decAmount(quote, o_quote);
       subacc := Book.subaccDecQuote(subacc, o_quote);
+      subacc := Book.subaccDelBuyLevel(subacc, o);
       [Book.valueClose(oid, "quote", quote.locked, 0, execute)];
     } else {
       lvl := Book.getLevel(sell_book, o.price);
@@ -1314,6 +1332,7 @@ shared (install) persistent actor class Canister(
       sell_book := Book.saveLevel(sell_book, o.price, lvl);
       base := Book.decAmount(base, o.base);
       subacc := Book.subaccDecBase(subacc, o.base);
+      subacc := Book.subaccDelSellLevel(subacc, o);
       [Book.valueClose(oid, "base", o.base.locked, 0, execute)];
     };
     orders_by_expiry := Book.delExpiry(orders_by_expiry, o.expires_at, oid);
@@ -1325,7 +1344,7 @@ shared (install) persistent actor class Canister(
       case (#AlmostFilled _) #AlmostFilled proof;
       case (#Expired _) #Expired proof;
     };
-    let closed = ?{ caller; sub; at = env.now; reason = rzn };
+    let closed = ?{ at = env.now; reason = rzn };
     o := { o with closed };
     orders := RBTree.insert(orders, Nat.compare, oid, o);
     user := Book.saveSubaccount(user, sub, subacc);

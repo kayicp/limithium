@@ -38,9 +38,11 @@ shared (install) persistent actor class Canister(
 
   var blocks = RBTree.empty<Nat, A.Block>();
 
+  // todo: trim these dedupes
   var transfer_dedupes = RBTree.empty<(Principal, I.TransferArg), Nat>();
   var approve_dedupes = RBTree.empty<(Principal, I.ApproveArg), Nat>();
   var transfer_from_dedupes = RBTree.empty<(Principal, I.TransferFromArg), Nat>();
+  var approval_by_expiry : I.Expiries = RBTree.empty();
 
   var prev_mint : ?Nat = null;
   var mint_queue = RBTree.empty<Nat, I.Enqueue>();
@@ -57,7 +59,7 @@ shared (install) persistent actor class Canister(
   };
 
   public shared ({ caller }) func icrc1_transfer(arg : I.TransferArg) : async Result.Type<Nat, I.TransferError> {
-    // if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
+    if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
     let from = { owner = caller; subaccount = arg.from_subaccount };
     if (not ICRC1.validateAccount(from)) return Error.text("Caller account is invalid");
     if (not ICRC1.validateAccount(arg.to)) return Error.text("`To` account is invalid");
@@ -118,11 +120,12 @@ shared (install) persistent actor class Canister(
     let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (arg.created_at_time != null) transfer_dedupes := RBTree.insert(transfer_dedupes, ICRC1.dedupeTransfer, (caller, arg), block_id);
     newBlock(block_id, ICRC1.valueTransfer(caller, arg, if (is_burn) #Burn else if (is_mint) #Mint else #Transfer, expected_fee, env.now, phash));
+    trim(env);
     #Ok block_id;
   };
 
   public shared ({ caller }) func icrc2_approve(arg : I.ApproveArg) : async Result.Type<Nat, I.ApproveError> {
-    // if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
+    if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
     let from = { owner = caller; subaccount = arg.from_subaccount };
     if (not ICRC1.validateAccount(from)) return Error.text("Caller account is invalid");
     if (not ICRC1.validateAccount(arg.spender)) return Error.text("Spender account is invalid");
@@ -175,15 +178,17 @@ shared (install) persistent actor class Canister(
     user := ICRC1.saveSubaccount(user, sub, subacc);
     saveUser(caller, user);
 
-    // todo: register expiry
+    approval_by_expiry := ICRC1.newExpiry(approval_by_expiry, expires_at, caller, sub, arg.spender.owner, spender_sub);
+
     let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (arg.created_at_time != null) approve_dedupes := RBTree.insert(approve_dedupes, ICRC1.dedupeApprove, (caller, arg), block_id);
-    newBlock(block_id, ICRC1.valueApprove(caller, arg, env.fee, env.now, phash));
+    newBlock(block_id, ICRC1.valueApprove(caller, arg, expires_at, env.fee, env.now, phash));
+    trim(env);
     #Ok block_id;
   };
 
   public shared ({ caller }) func icrc2_transfer_from(arg : I.TransferFromArg) : async Result.Type<Nat, I.TransferFromError> {
-    // if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
+    if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
     let spender_acc = { owner = caller; subaccount = arg.spender_subaccount };
     if (not ICRC1.validateAccount(spender_acc)) return Error.text("Caller account is invalid");
     if (not ICRC1.validateAccount(arg.from)) return Error.text("`From` account is invalid");
@@ -250,12 +255,13 @@ shared (install) persistent actor class Canister(
     let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (arg.created_at_time != null) transfer_from_dedupes := RBTree.insert(transfer_from_dedupes, ICRC1.dedupeTransferFrom, (caller, arg), block_id);
     newBlock(block_id, ICRC1.valueTransferFrom(caller, arg, env.fee, env.now, phash));
+    trim(env);
     #Ok block_id;
   };
 
   public shared query func xlt_max_update_batch_size() : async ?Nat = async Value.metaNat(meta, I.MAX_UPDATE_BATCH);
   public shared ({ caller }) func xlt_enqueue_minting_rounds(enqueues : [I.Enqueue]) : async Result.Type<(), I.EnqueueErrors> {
-    // if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
+    if (not Value.getBool(meta, I.AVAILABLE, true)) return Error.text("Unavailable");
     let vault_id = switch (Value.metaPrincipal(meta, I.VAULT)) {
       case (?found) found;
       case _ return Error.text("Metadata `" # I.VAULT # "` is not set");
@@ -290,21 +296,60 @@ shared (install) persistent actor class Canister(
       mint_queue := RBTree.insert(mint_queue, Nat.compare, id, q);
       id += 1;
     };
-    mint_rounds(env);
+    trim(env);
     #Ok;
   };
 
-  func mint_rounds(env : I.Environment) = for (i in Iter.range(0, 100 - 1)) switch prev_mint {
-    case (?prev) switch (RBTree.right(mint_queue, Nat.compare, prev)) {
-      case (?(next, nextq)) if (mint_round(next, nextq, env)) prev_mint := ?next else return;
-      case _ prev_mint := null;
+  func trim(env : I.Environment) {
+    var round = 0;
+    var max_round = 100;
+    label trimming while (round < max_round) {
+      let (p, arg) = switch (RBTree.minKey(transfer_dedupes)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      round += 1;
+      switch (OptionX.compare(arg.created_at_time, ?env.dedupe_start, Nat64.compare)) {
+        case (#less) transfer_dedupes := RBTree.delete(transfer_dedupes, ICRC1.dedupeTransfer, (p, arg));
+        case _ break trimming;
+      };
     };
-    case _ switch (RBTree.min(mint_queue)) {
-      case (?(min, minq)) if (mint_round(min, minq, env)) prev_mint := ?min else return;
-      case _ return;
+    label trimming while (round < max_round) {
+      let (p, arg) = switch (RBTree.minKey(approve_dedupes)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      round += 1;
+      switch (OptionX.compare(arg.created_at_time, ?env.dedupe_start, Nat64.compare)) {
+        case (#less) approve_dedupes := RBTree.delete(approve_dedupes, ICRC1.dedupeApprove, (p, arg));
+        case _ break trimming;
+      };
+    };
+    label trimming while (round < max_round) {
+      let (p, arg) = switch (RBTree.minKey(transfer_from_dedupes)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      round += 1;
+      switch (OptionX.compare(arg.created_at_time, ?env.dedupe_start, Nat64.compare)) {
+        case (#less) transfer_from_dedupes := RBTree.delete(transfer_from_dedupes, ICRC1.dedupeTransferFrom, (p, arg));
+        case _ break trimming;
+      };
+    };
+    label trimming while (round < max_round) {
+      switch prev_mint {
+        case (?prev) switch (RBTree.right(mint_queue, Nat.compare, prev)) {
+          case (?(next, nextq)) if (mint_round(next, nextq, env)) prev_mint := ?next else break trimming;
+          case _ prev_mint := null;
+        };
+        case _ switch (RBTree.min(mint_queue)) {
+          case (?(min, minq)) if (mint_round(min, minq, env)) prev_mint := ?min else break trimming;
+          case _ break trimming;
+        };
+      };
+      round += 1;
     };
   };
-
   func mint_round(qid : Nat, q : I.Enqueue, env : I.Environment) : Bool {
     if (q.rounds == 0) {
       mint_queue := RBTree.delete(mint_queue, Nat.compare, qid);
@@ -327,12 +372,13 @@ shared (install) persistent actor class Canister(
     user := ICRC1.saveSubaccount(user, sub, subacc);
     saveUser(q.account.owner, user);
 
-    // todo: blockify
+    let (block_id, phash) = ArchiveL.getPhash(blocks);
+    newBlock(block_id, ICRC1.valueTransfer(env.minter.owner, { to = q.account; fee = null; memo = null; from_subaccount = env.minter.subaccount; created_at_time = null; amount = mint }, #Mint, 0, env.now, phash));
 
     mint_queue := if (q.rounds > 1) {
       RBTree.insert(mint_queue, Nat.compare, qid, { q with rounds = q.rounds - 1 });
     } else RBTree.delete(mint_queue, Nat.compare, qid); // done minting, remove it
-    return true;
+    true;
   };
 
   public shared query func icrc1_name() : async Text = async "Limithium";
