@@ -22,8 +22,8 @@ module {
   public let MIN_BASE_AMOUNT = "book:minimum_base_amount";
   public let MIN_PRICE = "book:minimum_price";
   public let TTL = "book:time_to_live"; // seconds
-  public let MAX_ORDER_EXPIRY = "book:max_order_expiry";
   public let MIN_ORDER_EXPIRY = "book:min_order_expiry";
+  public let MAX_ORDER_EXPIRY = "book:max_order_expiry";
 
   public let PLACE_FEE_QUOTE = "book:open_fee_quote";
   public let PLACE_FEE_BASE = "book:open_fee_base";
@@ -188,7 +188,6 @@ module {
     vault : Vault.Canister;
     amount_tick : Nat;
     base_token_id : Principal;
-    default_expires_at : Nat64;
     fee_denom : Nat;
     maker_fee_numer : Nat;
     max_expires_at : Nat64;

@@ -38,12 +38,13 @@ shared (install) persistent actor class Canister(
         permitted_drift_secs : Nat;
         min_memo_size : Nat;
         max_memo_size : Nat;
-        min_approval_expiry_secs : Nat;
         max_approval_expiry_secs : Nat;
       };
-      vault : Principal;
-      max_update_batch_size : Nat;
-      max_mint_per_round : Nat;
+      vault : ?{
+        id : Principal;
+        max_update_batch_size : Nat;
+        max_mint_per_round : Nat;
+      };
       archive : {
         max_update_batch : Nat;
         min_creation_tcycles : Nat;
@@ -65,11 +66,15 @@ shared (install) persistent actor class Canister(
       meta := Value.setNat(meta, I.PERMITTED_DRIFT, ?i.token.permitted_drift_secs);
       meta := Value.setNat(meta, I.MIN_MEMO, ?i.token.min_memo_size);
       meta := Value.setNat(meta, I.MAX_MEMO, ?i.token.max_memo_size);
-      meta := Value.setNat(meta, I.MIN_APPROVAL_EXPIRY, ?i.token.min_approval_expiry_secs);
       meta := Value.setNat(meta, I.MAX_APPROVAL_EXPIRY, ?i.token.max_approval_expiry_secs);
-      meta := Value.setPrincipal(meta, I.VAULT, ?i.vault);
-      meta := Value.setNat(meta, I.MAX_UPDATE_BATCH, ?i.max_update_batch_size);
-      meta := Value.setNat(meta, I.MAX_MINT, ?i.max_mint_per_round);
+      switch (i.vault) {
+        case (?v) {
+          meta := Value.setPrincipal(meta, I.VAULT, ?v.id);
+          meta := Value.setNat(meta, I.MAX_UPDATE_BATCH, ?v.max_update_batch_size);
+          meta := Value.setNat(meta, I.MAX_MINT, ?v.max_mint_per_round);
+        };
+        case _ ();
+      };
       meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?i.archive.max_update_batch);
       meta := Value.setNat(meta, A.MIN_TCYCLES, ?i.archive.min_creation_tcycles);
     };

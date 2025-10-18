@@ -47,14 +47,14 @@ shared (install) persistent actor class Canister(
   var meta : Value.Metadata = RBTree.empty();
   switch deploy {
     case (#Init i) {
-      meta := Value.setNat(meta, I.MIN_MEMO, ?i.memo_min_size);
-      meta := Value.setNat(meta, I.MAX_MEMO, ?i.memo_max_size);
-      meta := Value.setNat(meta, I.TX_WINDOW, ?i.secs_tx_window);
-      meta := Value.setNat(meta, I.PERMITTED_DRIFT, ?i.secs_permitted_drift);
-      meta := Value.setAccountP(meta, I.FEE_COLLECTOR, ?i.fee_collector);
-      meta := Value.setNat(meta, I.DEFAULT_TAKE, ?i.query_default_take);
-      meta := Value.setNat(meta, I.MAX_TAKE, ?i.query_max_take);
-      meta := Value.setNat(meta, I.MAX_QUERY_BATCH, ?i.query_max_batch);
+      meta := Value.setNat(meta, V.MIN_MEMO, ?i.memo_min_size);
+      meta := Value.setNat(meta, V.MAX_MEMO, ?i.memo_max_size);
+      meta := Value.setNat(meta, V.TX_WINDOW, ?i.secs_tx_window);
+      meta := Value.setNat(meta, V.PERMITTED_DRIFT, ?i.secs_permitted_drift);
+      meta := Value.setAccountP(meta, V.FEE_COLLECTOR, ?{ owner = i.fee_collector; subaccount = null });
+      meta := Value.setNat(meta, V.DEFAULT_TAKE, ?i.query_default_take);
+      meta := Value.setNat(meta, V.MAX_TAKE, ?i.query_max_take);
+      meta := Value.setNat(meta, V.MAX_QUERY_BATCH, ?i.query_max_batch);
       meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?i.archive.max_update_batch);
       meta := Value.setNat(meta, A.MIN_TCYCLES, ?i.archive.min_creation_tcycles);
     };

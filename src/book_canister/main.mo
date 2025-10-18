@@ -82,8 +82,8 @@ shared (install) persistent actor class Canister(
       meta := Value.setNat(meta, B.AMOUNT_TICK, ?i.tick.amount);
       meta := Value.setNat(meta, B.PRICE_TICK, ?i.tick.price);
       meta := Value.setPrincipal(meta, B.FEE_COLLECTOR, ?i.fee.collector);
-      meta := Value.setNat(meta, B.FEE_NUMER_MAKER, ?i.fee.numer.maker);
-      meta := Value.setNat(meta, B.FEE_NUMER_TAKER, ?i.fee.numer.taker);
+      meta := Value.setNat(meta, B.MAKER_FEE_NUMER, ?i.fee.numer.maker);
+      meta := Value.setNat(meta, B.TAKER_FEE_NUMER, ?i.fee.numer.taker);
       meta := Value.setNat(meta, B.TRADING_FEE_DENOM, ?i.fee.denom);
       meta := Value.setNat(meta, B.MIN_PRICE, ?i.price_min);
       meta := Value.setNat(meta, B.TTL, ?i.secs.ttl);
@@ -93,7 +93,7 @@ shared (install) persistent actor class Canister(
       meta := Value.setNat(meta, B.MAX_ORDER_EXPIRY, ?i.secs.order_expiry.max);
       meta := Value.setNat(meta, B.CANCEL_FEE_BASE, ?i.close_fee.base);
       meta := Value.setNat(meta, B.CANCEL_FEE_QUOTE, ?i.close_fee.quote);
-      meta := Value.setPrincipal(meta, B.REWARD_TOKEN_ID, ?i.reward.token);
+      meta := Value.setPrincipal(meta, B.REWARD_TOKEN, ?i.reward.token);
       meta := Value.setNat(meta, B.REWARD_MULTIPLIER, ?i.reward.multiplier);
       meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?i.archive.max_update_batch);
       meta := Value.setNat(meta, A.MIN_TCYCLES, ?i.archive.min_creation_tcycles);
@@ -159,7 +159,7 @@ shared (install) persistent actor class Canister(
     let instructions_buff = Buffer.Buffer<[V.Instruction]>(arg.orders.size());
     for (index in Iter.range(0, arg.orders.size() - 1)) {
       let o = arg.orders[index];
-      let o_expiry = Option.get(o.expires_at, env.default_expires_at);
+      let o_expiry = Option.get(o.expires_at, env.max_expires_at);
       if (o_expiry < env.min_expires_at) return #Err(#ExpiresTooSoon { index; minimum_expires_at = env.min_expires_at });
       if (o_expiry > env.max_expires_at) return #Err(#ExpiresTooLate { index; maximum_expires_at = env.max_expires_at });
 

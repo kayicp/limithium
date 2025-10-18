@@ -414,14 +414,6 @@ module {
     if (min_expiry < lowest_min_expiry) {
       min_expiry := lowest_min_expiry;
       meta := Value.setNat(meta, B.MIN_ORDER_EXPIRY, ?(Nat64.toNat(min_expiry / 1_000_000_000)));
-    } else if (min_expiry > max_expiry) {
-      min_expiry := max_expiry;
-      meta := Value.setNat(meta, B.DEFAULT_ORDER_EXPIRY, ?max_expiry_seconds);
-    };
-    var default_expiry = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, B.DEFAULT_ORDER_EXPIRY, 0)));
-    if (default_expiry < min_expiry or default_expiry > max_expiry) {
-      default_expiry := (min_expiry + max_expiry) / 2;
-      meta := Value.setNat(meta, B.DEFAULT_ORDER_EXPIRY, ?(Nat64.toNat(default_expiry / 1_000_000_000)));
     };
     let min_ttl = Time64.DAYS(1);
     var ttl = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, B.TTL, 0)));
@@ -457,7 +449,6 @@ module {
       min_price;
       max_expires_at = now + max_expiry;
       min_expires_at = now + min_expiry;
-      default_expires_at = now + default_expiry;
       now;
       tx_window;
       permitted_drift;

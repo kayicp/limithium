@@ -15,6 +15,18 @@
       "main": "src/vault_canister/main.mo",
       "type": "motoko"
     },
+    "icp_token": {
+      "main": "src/icrc1_canister/main.mo",
+      "type": "motoko"
+    },
+    "ckbtc_token": {
+      "main": "src/icrc1_canister/main.mo",
+      "type": "motoko"
+    },
+    "xlt_token": {
+      "main": "src/icrc1_canister/main.mo",
+      "type": "motoko"
+    },
     "frontend_canister": {
       "dependencies": [
         "vault_canister"
