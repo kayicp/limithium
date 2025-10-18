@@ -29,16 +29,82 @@ import Text "mo:base/Text";
 import Cycles "mo:core/Cycles";
 
 shared (install) persistent actor class Canister(
-  // deploy : {
-  //   #Init : ();
-  //   #Upgrade;
-  // }
+  deploy : {
+    #Init : {
+      max_order_batch : Nat;
+      id : {
+        vault : Principal;
+        base : Principal;
+        quote : Principal;
+      };
+      memo : { min : Nat; max : Nat };
+      tick : {
+        amount : Nat;
+        price : Nat;
+      };
+      fee : {
+        collector : Principal;
+        numer : {
+          maker : Nat;
+          taker : Nat;
+        };
+        denom : Nat;
+      };
+      price_min : Nat;
+      secs : {
+        ttl : Nat;
+        tx_window : Nat;
+        permitted_drift : Nat;
+        order_expiry : { min : Nat; max : Nat };
+      };
+      close_fee : { base : Nat; quote : Nat };
+      reward : {
+        token : Principal;
+        multiplier : Nat;
+      };
+      archive : {
+        max_update_batch : Nat;
+        min_creation_tcycles : Nat;
+      };
+    };
+    #Upgrade;
+  }
 ) = Self {
+  var meta : Value.Metadata = RBTree.empty();
+  switch deploy {
+    case (#Init i) {
+      meta := Value.setNat(meta, B.MAX_ORDER_BATCH, ?i.max_order_batch);
+      meta := Value.setPrincipal(meta, B.VAULT, ?i.id.vault);
+      meta := Value.setPrincipal(meta, B.BASE_TOKEN, ?i.id.base);
+      meta := Value.setPrincipal(meta, B.QUOTE_TOKEN, ?i.id.quote);
+      meta := Value.setNat(meta, B.MIN_MEMO, ?i.memo.min);
+      meta := Value.setNat(meta, B.MAX_MEMO, ?i.memo.max);
+      meta := Value.setNat(meta, B.AMOUNT_TICK, ?i.tick.amount);
+      meta := Value.setNat(meta, B.PRICE_TICK, ?i.tick.price);
+      meta := Value.setPrincipal(meta, B.FEE_COLLECTOR, ?i.fee.collector);
+      meta := Value.setNat(meta, B.FEE_NUMER_MAKER, ?i.fee.numer.maker);
+      meta := Value.setNat(meta, B.FEE_NUMER_TAKER, ?i.fee.numer.taker);
+      meta := Value.setNat(meta, B.TRADING_FEE_DENOM, ?i.fee.denom);
+      meta := Value.setNat(meta, B.MIN_PRICE, ?i.price_min);
+      meta := Value.setNat(meta, B.TTL, ?i.secs.ttl);
+      meta := Value.setNat(meta, B.TX_WINDOW, ?i.secs.tx_window);
+      meta := Value.setNat(meta, B.PERMITTED_DRIFT, ?i.secs.permitted_drift);
+      meta := Value.setNat(meta, B.MIN_ORDER_EXPIRY, ?i.secs.order_expiry.min);
+      meta := Value.setNat(meta, B.MAX_ORDER_EXPIRY, ?i.secs.order_expiry.max);
+      meta := Value.setNat(meta, B.CANCEL_FEE_BASE, ?i.close_fee.base);
+      meta := Value.setNat(meta, B.CANCEL_FEE_QUOTE, ?i.close_fee.quote);
+      meta := Value.setPrincipal(meta, B.REWARD_TOKEN_ID, ?i.reward.token);
+      meta := Value.setNat(meta, B.REWARD_MULTIPLIER, ?i.reward.multiplier);
+      meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?i.archive.max_update_batch);
+      meta := Value.setNat(meta, A.MIN_TCYCLES, ?i.archive.min_creation_tcycles);
+    };
+    case _ ();
+  };
+
   var tip_cert = MerkleTree.empty();
   func updateTipCert() = CertifiedData.set(MerkleTree.treeHash(tip_cert)); // also call this on deploy.init
   system func postupgrade() = updateTipCert(); // https://gist.github.com/nomeata/f325fcd2a6692df06e38adedf9ca1877
 
-  var meta : Value.Metadata = RBTree.empty();
   var users : B.Users = RBTree.empty();
 
   var order_id = 0;
@@ -159,7 +225,6 @@ shared (install) persistent actor class Canister(
       case (?found) return #Err(#PriceUnavailable { lbuy with order_id = found });
       case _ ();
     };
-    // todo: skip fee check since it's zero anyway
     let user_bals = await env.vault.vault_unlocked_balances_of([{ account = user_acc; token = env.base_token_id }, { account = user_acc; token = env.quote_token_id }]);
     if (user_bals[0] < lbase or user_bals[1] < lquote) return #Err(#InsufficientBalance { base_balance = user_bals[0]; quote_balance = user_bals[1] });
     switch (checkMemo(arg.memo)) {
@@ -1352,4 +1417,7 @@ shared (install) persistent actor class Canister(
     newBlock(block_id, Book.valueCloses(null, env.now, val, phash));
     Error.text("No job available");
   };
+
+  public shared query func rb_archive_min_block() : async ?Nat = async RBTree.minKey(blocks);
+  public shared query func rb_archive_max_update_batch_size() : async ?Nat = async Value.metaNat(meta, A.MAX_UPDATE_BATCH_SIZE);
 };

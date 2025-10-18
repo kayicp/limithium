@@ -19,26 +19,70 @@ import LEB128 "mo:leb128";
 import MerkleTree "../util/motoko/MerkleTree";
 import CertifiedData "mo:base/CertifiedData";
 import Text "mo:base/Text";
+import Buffer "mo:base/Buffer";
 import ICRC3T "../util/motoko/ICRC-3/Types";
 import OptionX "../util/motoko/Option";
 import Cycles "mo:core/Cycles";
 
 shared (install) persistent actor class Canister(
-  // deploy : {
-  //   #Init : ();
-  //   #Upgrade;
-  // }
+  deploy : {
+    #Init : {
+      token : {
+        name : Text;
+        symbol : Text;
+        decimals : Nat;
+        fee : Nat;
+        max_supply : Nat;
+        minter : Principal;
+        tx_window_secs : Nat;
+        permitted_drift_secs : Nat;
+        min_memo_size : Nat;
+        max_memo_size : Nat;
+        min_approval_expiry_secs : Nat;
+        max_approval_expiry_secs : Nat;
+      };
+      vault : Principal;
+      max_update_batch_size : Nat;
+      max_mint_per_round : Nat;
+      archive : {
+        max_update_batch : Nat;
+        min_creation_tcycles : Nat;
+      };
+    };
+    #Upgrade;
+  }
 ) = Self {
+  var meta = RBTree.empty<Text, Value.Type>();
+  switch deploy {
+    case (#Init i) {
+      meta := Value.setText(meta, I.NAME, ?i.token.name);
+      meta := Value.setText(meta, I.SYMBOL, ?i.token.symbol);
+      meta := Value.setNat(meta, I.DECIMALS, ?i.token.decimals);
+      meta := Value.setNat(meta, I.FEE, ?i.token.fee);
+      meta := Value.setNat(meta, I.MAX_SUPPLY, ?i.token.max_supply);
+      meta := Value.setAccountP(meta, I.MINTER, ?{ owner = i.token.minter; subaccount = null });
+      meta := Value.setNat(meta, I.TX_WINDOW, ?i.token.tx_window_secs);
+      meta := Value.setNat(meta, I.PERMITTED_DRIFT, ?i.token.permitted_drift_secs);
+      meta := Value.setNat(meta, I.MIN_MEMO, ?i.token.min_memo_size);
+      meta := Value.setNat(meta, I.MAX_MEMO, ?i.token.max_memo_size);
+      meta := Value.setNat(meta, I.MIN_APPROVAL_EXPIRY, ?i.token.min_approval_expiry_secs);
+      meta := Value.setNat(meta, I.MAX_APPROVAL_EXPIRY, ?i.token.max_approval_expiry_secs);
+      meta := Value.setPrincipal(meta, I.VAULT, ?i.vault);
+      meta := Value.setNat(meta, I.MAX_UPDATE_BATCH, ?i.max_update_batch_size);
+      meta := Value.setNat(meta, I.MAX_MINT, ?i.max_mint_per_round);
+      meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?i.archive.max_update_batch);
+      meta := Value.setNat(meta, A.MIN_TCYCLES, ?i.archive.min_creation_tcycles);
+    };
+    case _ ();
+  };
+
   var tip_cert = MerkleTree.empty();
   func updateTipCert() = CertifiedData.set(MerkleTree.treeHash(tip_cert)); // also call this on deploy.init
   system func postupgrade() = updateTipCert(); // https://gist.github.com/nomeata/f325fcd2a6692df06e38adedf9ca1877
 
   var users : I.Users = RBTree.empty();
-  var meta = RBTree.empty<Text, Value.Type>();
-
   var blocks = RBTree.empty<Nat, A.Block>();
 
-  // todo: trim these dedupes
   var transfer_dedupes = RBTree.empty<(Principal, I.TransferArg), Nat>();
   var approve_dedupes = RBTree.empty<(Principal, I.ApproveArg), Nat>();
   var transfer_from_dedupes = RBTree.empty<(Principal, I.TransferFromArg), Nat>();
@@ -120,7 +164,7 @@ shared (install) persistent actor class Canister(
     let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (arg.created_at_time != null) transfer_dedupes := RBTree.insert(transfer_dedupes, ICRC1.dedupeTransfer, (caller, arg), block_id);
     newBlock(block_id, ICRC1.valueTransfer(caller, arg, if (is_burn) #Burn else if (is_mint) #Mint else #Transfer, expected_fee, env.now, phash));
-    trim(env);
+    await* trim(env);
     #Ok block_id;
   };
 
@@ -183,7 +227,7 @@ shared (install) persistent actor class Canister(
     let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (arg.created_at_time != null) approve_dedupes := RBTree.insert(approve_dedupes, ICRC1.dedupeApprove, (caller, arg), block_id);
     newBlock(block_id, ICRC1.valueApprove(caller, arg, expires_at, env.fee, env.now, phash));
-    trim(env);
+    await* trim(env);
     #Ok block_id;
   };
 
@@ -255,7 +299,7 @@ shared (install) persistent actor class Canister(
     let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (arg.created_at_time != null) transfer_from_dedupes := RBTree.insert(transfer_from_dedupes, ICRC1.dedupeTransferFrom, (caller, arg), block_id);
     newBlock(block_id, ICRC1.valueTransferFrom(caller, arg, env.fee, env.now, phash));
-    trim(env);
+    await* trim(env);
     #Ok block_id;
   };
 
@@ -296,11 +340,11 @@ shared (install) persistent actor class Canister(
       mint_queue := RBTree.insert(mint_queue, Nat.compare, id, q);
       id += 1;
     };
-    trim(env);
+    await* trim(env);
     #Ok;
   };
 
-  func trim(env : I.Environment) {
+  func trim(env : I.Environment) : async* () {
     var round = 0;
     var max_round = 100;
     label trimming while (round < max_round) {
@@ -349,6 +393,7 @@ shared (install) persistent actor class Canister(
       };
       round += 1;
     };
+    if (round < max_round) ignore await* sendBlock(); // todo: maybe trim archive first before minting rounds
   };
   func mint_round(qid : Nat, q : I.Enqueue, env : I.Environment) : Bool {
     if (q.rounds == 0) {
@@ -443,106 +488,109 @@ shared (install) persistent actor class Canister(
     };
   };
 
-  // func sendBlock() : async* Result.Type<(), { #Sync : Error.Generic; #Async : Error.Generic }> {
-  //   var max_batch = Value.getNat(meta, A.MAX_UPDATE_BATCH_SIZE, 0);
-  //   if (max_batch == 0) max_batch := 1;
-  //   if (max_batch > 100) max_batch := 100;
-  //   meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?max_batch);
+  func sendBlock() : async* Result.Type<(), { #Sync : Error.Generic; #Async : Error.Generic }> {
+    var max_batch = Value.getNat(meta, A.MAX_UPDATE_BATCH_SIZE, 0);
+    if (max_batch == 0) max_batch := 1;
+    if (max_batch > 100) max_batch := 100;
+    meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?max_batch);
 
-  //   if (RBTree.size(blocks) <= max_batch) return #Err(#Sync(Error.generic("Not enough blocks to archive", 0)));
-  //   var locks = RBTree.empty<Nat, A.Block>();
-  //   let batch_buff = Buffer.Buffer<ICRC3T.BlockResult>(max_batch);
-  //   label collecting for ((b_id, b) in RBTree.entries(blocks)) {
-  //     if (b.locked) return #Err(#Sync(Error.generic("Some blocks are locked for archiving", 0)));
-  //     locks := RBTree.insert(locks, Nat.compare, b_id, b);
-  //     batch_buff.add({ id = b_id; block = b.val });
-  //     if (batch_buff.size() >= max_batch) break collecting;
-  //   };
-  //   for ((b_id, b) in RBTree.entries(locks)) blocks := RBTree.insert(blocks, Nat.compare, b_id, { b with locked = true });
-  //   func reunlock<T>(t : T) : T {
-  //     for ((b_id, b) in RBTree.entries(locks)) blocks := RBTree.insert(blocks, Nat.compare, b_id, { b with locked = false });
-  //     t;
-  //   };
-  //   let root = switch (Value.metaPrincipal(meta, A.ROOT)) {
-  //     case (?exist) exist;
-  //     case _ switch (await* createArchive(null)) {
-  //       case (#Ok created) created;
-  //       case (#Err err) return reunlock(#Err(#Async(err)));
-  //     };
-  //   };
-  //   let batch = Buffer.toArray(batch_buff);
-  //   let start = batch[0].id;
-  //   var prev_redir : A.Redirect = #Ask(actor (Principal.toText(root)));
-  //   var curr_redir = prev_redir;
-  //   var next_redir = try await (actor (Principal.toText(root)) : Archive.Canister).rb_archive_ask(start) catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+    if (RBTree.size(blocks) <= max_batch) return #Err(#Sync(Error.generic("Not enough blocks to archive", 0)));
+    var locks = RBTree.empty<Nat, A.Block>();
+    let batch_buff = Buffer.Buffer<ICRC3T.BlockResult>(max_batch);
+    label collecting for ((b_id, b) in RBTree.entries(blocks)) {
+      if (b.locked) return #Err(#Sync(Error.generic("Some blocks are locked for archiving", 0)));
+      locks := RBTree.insert(locks, Nat.compare, b_id, b);
+      batch_buff.add({ id = b_id; block = b.val });
+      if (batch_buff.size() >= max_batch) break collecting;
+    };
+    for ((b_id, b) in RBTree.entries(locks)) blocks := RBTree.insert(blocks, Nat.compare, b_id, { b with locked = true });
+    func reunlock<T>(t : T) : T {
+      for ((b_id, b) in RBTree.entries(locks)) blocks := RBTree.insert(blocks, Nat.compare, b_id, { b with locked = false });
+      t;
+    };
+    let root = switch (Value.metaPrincipal(meta, A.ROOT)) {
+      case (?exist) exist;
+      case _ switch (await* createArchive(null)) {
+        case (#Ok created) created;
+        case (#Err err) return reunlock(#Err(#Async(err)));
+      };
+    };
+    let batch = Buffer.toArray(batch_buff);
+    let start = batch[0].id;
+    var prev_redir : A.Redirect = #Ask(actor (Principal.toText(root)));
+    var curr_redir = prev_redir;
+    var next_redir = try await (actor (Principal.toText(root)) : Archive.Canister).rb_archive_ask(start) catch ee return reunlock(#Err(#Async(Error.convert(ee))));
 
-  //   label travelling while true {
-  //     switch (ArchiveL.validateSequence(prev_redir, curr_redir, next_redir)) {
-  //       case (#Err msg) return reunlock(#Err(#Async(Error.generic(msg, 0))));
-  //       case _ ();
-  //     };
-  //     prev_redir := curr_redir;
-  //     curr_redir := next_redir;
-  //     next_redir := switch next_redir {
-  //       case (#Ask cnstr) try await cnstr.rb_archive_ask(start) catch ee return reunlock(#Err(#Async(Error.convert(ee))));
-  //       case (#Add cnstr) {
-  //         let cnstr_id = Principal.fromActor(cnstr);
-  //         try {
-  //           switch (await cnstr.rb_archive_add(batch)) {
-  //             case (#Err(#InvalidDestination r)) r;
-  //             case (#Err(#UnexpectedBlock x)) return reunlock(#Err(#Async(Error.generic("UnexpectedBlock: " # debug_show x, 0))));
-  //             case (#Err(#MinimumBlockViolation x)) return reunlock(#Err(#Async(Error.generic("MinimumBlockViolation: " # debug_show x, 0))));
-  //             case (#Err(#BatchTooLarge x)) return reunlock(#Err(#Async(Error.generic("BatchTooLarge: " # debug_show x, 0))));
-  //             case (#Err(#GenericError x)) return reunlock(#Err(#Async(#GenericError x)));
-  //             case (#Ok) break travelling;
-  //           };
-  //         } catch ee #Create(actor (Principal.toText(cnstr_id)));
-  //       };
-  //       case (#Create cnstr) {
-  //         let cnstr_id = Principal.fromActor(cnstr);
-  //         try {
-  //           let slave = switch (await* createArchive(?cnstr_id)) {
-  //             case (#Err err) return reunlock(#Err(#Async(err)));
-  //             case (#Ok created) created;
-  //           };
-  //           switch (await cnstr.rb_archive_create(slave)) {
-  //             case (#Err(#InvalidDestination r)) r;
-  //             case (#Err(#GenericError x)) return reunlock(#Err(#Async(#GenericError x)));
-  //             case (#Ok new_root) {
-  //               meta := Value.setPrincipal(meta, A.ROOT, ?new_root);
-  //               meta := Value.setPrincipal(meta, A.STANDBY, null);
-  //               #Add(actor (Principal.toText(slave)));
-  //             };
-  //           };
-  //         } catch ee return reunlock(#Err(#Async(Error.convert(ee))));
-  //       };
-  //     };
-  //   };
-  //   for (b in batch.vals()) blocks := RBTree.delete(blocks, Nat.compare, b.id);
-  //   #Ok;
-  // };
+    label travelling while true {
+      switch (ArchiveL.validateSequence(prev_redir, curr_redir, next_redir)) {
+        case (#Err msg) return reunlock(#Err(#Async(Error.generic(msg, 0))));
+        case _ ();
+      };
+      prev_redir := curr_redir;
+      curr_redir := next_redir;
+      next_redir := switch next_redir {
+        case (#Ask cnstr) try await cnstr.rb_archive_ask(start) catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+        case (#Add cnstr) {
+          let cnstr_id = Principal.fromActor(cnstr);
+          try {
+            switch (await cnstr.rb_archive_add(batch)) {
+              case (#Err(#InvalidDestination r)) r;
+              case (#Err(#UnexpectedBlock x)) return reunlock(#Err(#Async(Error.generic("UnexpectedBlock: " # debug_show x, 0))));
+              case (#Err(#MinimumBlockViolation x)) return reunlock(#Err(#Async(Error.generic("MinimumBlockViolation: " # debug_show x, 0))));
+              case (#Err(#BatchTooLarge x)) return reunlock(#Err(#Async(Error.generic("BatchTooLarge: " # debug_show x, 0))));
+              case (#Err(#GenericError x)) return reunlock(#Err(#Async(#GenericError x)));
+              case (#Ok) break travelling;
+            };
+          } catch ee #Create(actor (Principal.toText(cnstr_id)));
+        };
+        case (#Create cnstr) {
+          let cnstr_id = Principal.fromActor(cnstr);
+          try {
+            let slave = switch (await* createArchive(?cnstr_id)) {
+              case (#Err err) return reunlock(#Err(#Async(err)));
+              case (#Ok created) created;
+            };
+            switch (await cnstr.rb_archive_create(slave)) {
+              case (#Err(#InvalidDestination r)) r;
+              case (#Err(#GenericError x)) return reunlock(#Err(#Async(#GenericError x)));
+              case (#Ok new_root) {
+                meta := Value.setPrincipal(meta, A.ROOT, ?new_root);
+                meta := Value.setPrincipal(meta, A.STANDBY, null);
+                #Add(actor (Principal.toText(slave)));
+              };
+            };
+          } catch ee return reunlock(#Err(#Async(Error.convert(ee))));
+        };
+      };
+    };
+    for (b in batch.vals()) blocks := RBTree.delete(blocks, Nat.compare, b.id);
+    #Ok;
+  };
 
-  // func createArchive(master : ?Principal) : async* Result.Type<Principal, Error.Generic> {
-  //   switch (Value.metaPrincipal(meta, A.STANDBY)) {
-  //     case (?standby) return try switch (await (actor (Principal.toText(standby)) : Archive.Canister).rb_archive_initialize(master)) {
-  //       case (#Err err) #Err err;
-  //       case _ #Ok standby;
-  //     } catch e #Err(Error.convert(e));
-  //     case _ ();
-  //   };
-  //   var archive_tcycles = Value.getNat(meta, A.MIN_TCYCLES, 0);
-  //   if (archive_tcycles < 3) archive_tcycles := 3;
-  //   if (archive_tcycles > 10) archive_tcycles := 10;
-  //   meta := Value.setNat(meta, A.MIN_TCYCLES, ?archive_tcycles);
+  func createArchive(master : ?Principal) : async* Result.Type<Principal, Error.Generic> {
+    switch (Value.metaPrincipal(meta, A.STANDBY)) {
+      case (?standby) return try switch (await (actor (Principal.toText(standby)) : Archive.Canister).rb_archive_initialize(master)) {
+        case (#Err err) #Err err;
+        case _ #Ok standby;
+      } catch e #Err(Error.convert(e));
+      case _ ();
+    };
+    var archive_tcycles = Value.getNat(meta, A.MIN_TCYCLES, 0);
+    if (archive_tcycles < 3) archive_tcycles := 3;
+    if (archive_tcycles > 10) archive_tcycles := 10;
+    meta := Value.setNat(meta, A.MIN_TCYCLES, ?archive_tcycles);
 
-  //   let trillion = 10 ** 12;
-  //   let cost = archive_tcycles * trillion;
-  //   let reserve = 2 * trillion;
-  //   if (Cycles.balance() < cost + reserve) return Error.text("Insufficient cycles balance to create a new archive");
+    let trillion = 10 ** 12;
+    let cost = archive_tcycles * trillion;
+    let reserve = 2 * trillion;
+    if (Cycles.balance() < cost + reserve) return Error.text("Insufficient cycles balance to create a new archive");
 
-  //   try {
-  //     let new_canister = await (with cycles = cost) Archive.Canister(master);
-  //     #Ok(Principal.fromActor(new_canister));
-  //   } catch e #Err(Error.convert(e));
-  // };
+    try {
+      let new_canister = await (with cycles = cost) Archive.Canister(master);
+      #Ok(Principal.fromActor(new_canister));
+    } catch e #Err(Error.convert(e));
+  };
+
+  public shared query func rb_archive_min_block() : async ?Nat = async RBTree.minKey(blocks);
+  public shared query func rb_archive_max_update_batch_size() : async ?Nat = async Value.metaNat(meta, A.MAX_UPDATE_BATCH_SIZE);
 };

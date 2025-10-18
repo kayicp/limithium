@@ -4,6 +4,11 @@ import Value "../util/motoko/Value";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 
 module {
+  public let NAME = "icrc1:name";
+  public let SYMBOL = "icrc1:symbol";
+  public let DECIMALS = "icrc1:decimals";
+  public let MAX_SUPPLY = "icrc1:max_supply";
+  public let LOGO = "icrc1:logo";
   public let TX_WINDOW = "icrc1:tx_window";
   public let PERMITTED_DRIFT = "icrc1:permitted_drift";
   public let MINTER = "icrc1:minter";
@@ -13,7 +18,6 @@ module {
   public let MAX_MEMO = "icrc1:max_memo_size";
   public let MAX_APPROVAL_EXPIRY = "icrc1:max_approval_expiry";
   public let MIN_APPROVAL_EXPIRY = "icrc1:min_approval_expiry";
-  public let DEFAULT_APPROVAL_EXPIRY = "icrc1:default_approval_expiry";
   public let AVAILABLE = "xlt:available";
   public let VAULT = "xlt:vault";
   public let MAX_UPDATE_BATCH = "xlt:max_update_batch_size";

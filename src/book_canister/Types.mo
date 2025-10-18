@@ -9,7 +9,7 @@ module {
   public let AVAILABLE = "book:available";
   public let MAX_ORDER_BATCH = "book:max_order_batch_size";
 
-  public let VAULT = "book:wallet_canister_id";
+  public let VAULT = "book:vault_canister_id";
   public let BASE_TOKEN = "book:base_token_id";
   public let QUOTE_TOKEN = "book:quote_token_id";
 
@@ -22,7 +22,6 @@ module {
   public let MIN_BASE_AMOUNT = "book:minimum_base_amount";
   public let MIN_PRICE = "book:minimum_price";
   public let TTL = "book:time_to_live"; // seconds
-  public let DEFAULT_ORDER_EXPIRY = "book:default_order_expiry";
   public let MAX_ORDER_EXPIRY = "book:max_order_expiry";
   public let MIN_ORDER_EXPIRY = "book:min_order_expiry";
 
@@ -30,7 +29,6 @@ module {
   public let PLACE_FEE_BASE = "book:open_fee_base";
   public let CANCEL_FEE_QUOTE = "book:close_fee_quote";
   public let CANCEL_FEE_BASE = "book:close_fee_base";
-  // todo: not all need "icrc1_icrc1_" prefix
   public let TX_WINDOW = "book:tx_window";
   public let PERMITTED_DRIFT = "book:permitted_drift";
 
@@ -40,7 +38,6 @@ module {
   public let REWARD_TOKEN = "book:reward_token_id";
   public let REWARD_MULTIPLIER = "book:reward_multiplier";
 
-  // todo: add `block_id` to order and trade object
   public type Nats = RBTree.Type<Nat, ()>;
   public type Expiries = RBTree.Type<Nat64, Nats>;
   public type Amount = {
