@@ -54,6 +54,12 @@ shared (install) persistent actor class Canister(
   }
 ) = Self {
   var meta = RBTree.empty<Text, Value.Type>();
+  var tip_cert = MerkleTree.empty();
+  func updateTipCert() = CertifiedData.set(MerkleTree.treeHash(tip_cert)); // also call this on deploy.init
+  system func postupgrade() = updateTipCert(); // https://gist.github.com/nomeata/f325fcd2a6692df06e38adedf9ca1877
+
+  var users : I.Users = RBTree.empty();
+
   switch deploy {
     case (#Init i) {
       meta := Value.setText(meta, I.NAME, ?i.token.name);
@@ -81,11 +87,6 @@ shared (install) persistent actor class Canister(
     case _ ();
   };
 
-  var tip_cert = MerkleTree.empty();
-  func updateTipCert() = CertifiedData.set(MerkleTree.treeHash(tip_cert)); // also call this on deploy.init
-  system func postupgrade() = updateTipCert(); // https://gist.github.com/nomeata/f325fcd2a6692df06e38adedf9ca1877
-
-  var users : I.Users = RBTree.empty();
   var blocks = RBTree.empty<Nat, A.Block>();
 
   var transfer_dedupes = RBTree.empty<(Principal, I.TransferArg), Nat>();

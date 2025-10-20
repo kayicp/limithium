@@ -13,14 +13,9 @@ module {
   public let BASE_TOKEN = "book:base_token_id";
   public let QUOTE_TOKEN = "book:quote_token_id";
 
-  public let AMOUNT_TICK = "book:amount_tick";
-  public let PRICE_TICK = "book:price_tick";
   public let MAKER_FEE_NUMER = "book:maker_fee_numerator";
   public let TAKER_FEE_NUMER = "book:taker_fee_numerator";
   public let TRADING_FEE_DENOM = "book:trading_fee_denominator";
-  public let MIN_QUOTE_AMOUNT = "book:minimum_quote_amount";
-  public let MIN_BASE_AMOUNT = "book:minimum_base_amount";
-  public let MIN_PRICE = "book:minimum_price";
   public let TTL = "book:time_to_live"; // seconds
   public let MIN_ORDER_EXPIRY = "book:min_order_expiry";
   public let MAX_ORDER_EXPIRY = "book:max_order_expiry";
@@ -186,18 +181,16 @@ module {
   public type Environment = {
     meta : Value.Metadata;
     vault : Vault.Canister;
-    amount_tick : Nat;
     base_token_id : Principal;
+    quote_token_id : Principal;
     fee_denom : Nat;
     maker_fee_numer : Nat;
-    max_expires_at : Nat64;
-    min_base_amount : Nat;
-    min_expires_at : Nat64;
-    min_price : Nat;
-    min_quote_amount : Nat;
-    price_tick : Nat;
-    quote_token_id : Principal;
     taker_fee_numer : Nat;
+    min_base_amount : Nat;
+    min_quote_amount : Nat;
+    min_price : Nat;
+    max_expires_at : Nat64;
+    min_expires_at : Nat64;
     now : Nat64;
     tx_window : Nat64;
     permitted_drift : Nat64;

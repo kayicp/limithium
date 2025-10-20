@@ -28,14 +28,20 @@ import Cycles "mo:core/Cycles";
 shared (install) persistent actor class Canister(
   deploy : {
     #Init : {
-      memo_min_size : Nat;
-      memo_max_size : Nat;
-      secs_tx_window : Nat;
-      secs_permitted_drift : Nat;
+      memo_size : {
+        min : Nat;
+        max : Nat;
+      };
+      secs : {
+        tx_window : Nat;
+        permitted_drift : Nat;
+      };
       fee_collector : Principal;
-      query_default_take : Nat;
-      query_max_take : Nat;
-      query_max_batch : Nat;
+      query_conf : {
+        default_take : Nat;
+        max_take : Nat;
+        max_batch : Nat;
+      };
       archive : {
         max_update_batch : Nat;
         min_creation_tcycles : Nat;
@@ -47,14 +53,14 @@ shared (install) persistent actor class Canister(
   var meta : Value.Metadata = RBTree.empty();
   switch deploy {
     case (#Init i) {
-      meta := Value.setNat(meta, V.MIN_MEMO, ?i.memo_min_size);
-      meta := Value.setNat(meta, V.MAX_MEMO, ?i.memo_max_size);
-      meta := Value.setNat(meta, V.TX_WINDOW, ?i.secs_tx_window);
-      meta := Value.setNat(meta, V.PERMITTED_DRIFT, ?i.secs_permitted_drift);
+      meta := Value.setNat(meta, V.MIN_MEMO, ?i.memo_size.min);
+      meta := Value.setNat(meta, V.MAX_MEMO, ?i.memo_size.max);
+      meta := Value.setNat(meta, V.TX_WINDOW, ?i.secs.tx_window);
+      meta := Value.setNat(meta, V.PERMITTED_DRIFT, ?i.secs.permitted_drift);
       meta := Value.setAccountP(meta, V.FEE_COLLECTOR, ?{ owner = i.fee_collector; subaccount = null });
-      meta := Value.setNat(meta, V.DEFAULT_TAKE, ?i.query_default_take);
-      meta := Value.setNat(meta, V.MAX_TAKE, ?i.query_max_take);
-      meta := Value.setNat(meta, V.MAX_QUERY_BATCH, ?i.query_max_batch);
+      meta := Value.setNat(meta, V.DEFAULT_TAKE, ?i.query_conf.default_take);
+      meta := Value.setNat(meta, V.MAX_TAKE, ?i.query_conf.max_take);
+      meta := Value.setNat(meta, V.MAX_QUERY_BATCH, ?i.query_conf.max_batch);
       meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?i.archive.max_update_batch);
       meta := Value.setNat(meta, A.MIN_TCYCLES, ?i.archive.min_creation_tcycles);
     };

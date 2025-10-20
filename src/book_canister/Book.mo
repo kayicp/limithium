@@ -351,96 +351,69 @@ module {
     let (base_decimals_res, quote_decimals_res, base_fee_res, quote_fee_res) = (base_token.icrc1_decimals(), quote_token.icrc1_decimals(), base_token.icrc1_fee(), quote_token.icrc1_fee());
     let (base_power, quote_power, base_token_fee, quote_token_fee) = (10 ** Nat8.toNat(await base_decimals_res), 10 ** Nat8.toNat(await quote_decimals_res), await base_fee_res, await quote_fee_res);
 
-    var amount_tick = Value.getNat(meta, B.AMOUNT_TICK, 0);
-    if (amount_tick < base_token_fee) {
-      amount_tick := base_token_fee;
-      meta := Value.setNat(meta, B.AMOUNT_TICK, ?amount_tick);
-    };
-    var price_tick = Value.getNat(meta, B.PRICE_TICK, 0);
-    if (price_tick < quote_token_fee) {
-      price_tick := quote_token_fee;
-      meta := Value.setNat(meta, B.PRICE_TICK, ?price_tick);
-    };
     var fee_denom = Value.getNat(meta, B.TRADING_FEE_DENOM, 0);
-    if (fee_denom < 100) {
-      fee_denom := 100;
-      meta := Value.setNat(meta, B.TRADING_FEE_DENOM, ?fee_denom);
-    };
+    // if (fee_denom < 100) {
+    //   fee_denom := 100;
+    //   meta := Value.setNat(meta, B.TRADING_FEE_DENOM, ?fee_denom);
+    // };
     var maker_fee_numer = Value.getNat(meta, B.MAKER_FEE_NUMER, 0);
-    let max_fee_denom = fee_denom / 10; // max at most 10%
-    if (maker_fee_numer > max_fee_denom) {
-      maker_fee_numer := max_fee_denom;
-      meta := Value.setNat(meta, B.MAKER_FEE_NUMER, ?maker_fee_numer);
-    };
+    // let max_fee_denom = fee_denom / 10; // max at most 10%
+    // if (maker_fee_numer > max_fee_denom) {
+    //   maker_fee_numer := max_fee_denom;
+    //   meta := Value.setNat(meta, B.MAKER_FEE_NUMER, ?maker_fee_numer);
+    // };
     var taker_fee_numer = Value.getNat(meta, B.TAKER_FEE_NUMER, 0);
-    if (taker_fee_numer > max_fee_denom) {
-      taker_fee_numer := max_fee_denom;
-      meta := Value.setNat(meta, B.TAKER_FEE_NUMER, ?taker_fee_numer);
-    };
+    // if (taker_fee_numer > max_fee_denom) {
+    //   taker_fee_numer := max_fee_denom;
+    //   meta := Value.setNat(meta, B.TAKER_FEE_NUMER, ?taker_fee_numer);
+    // };
     let min_fee_numer = Nat.max(1, Nat.min(maker_fee_numer, taker_fee_numer));
-    // todo: rethink?
-    // (tokenfee * 2) for amount + future transfer of amount
-    let lowest_base_amount = base_token_fee * 2 * fee_denom / min_fee_numer;
-    var min_base_amount = Value.getNat(meta, B.MIN_BASE_AMOUNT, 0);
-    if (min_base_amount < lowest_base_amount) {
-      min_base_amount := lowest_base_amount;
-      meta := Value.setNat(meta, B.MIN_BASE_AMOUNT, ?min_base_amount);
-    };
-    let lowest_quote_amount = quote_token_fee * 2 * fee_denom / min_fee_numer;
-    var min_quote_amount = Value.getNat(meta, B.MIN_QUOTE_AMOUNT, 0);
-    if (min_quote_amount < lowest_quote_amount) {
-      min_quote_amount := lowest_quote_amount;
-      meta := Value.setNat(meta, B.MIN_QUOTE_AMOUNT, ?min_quote_amount);
-    };
-    let lowest_price = min_quote_amount / min_base_amount;
-    var min_price = Value.getNat(meta, B.MIN_PRICE, 0);
-    if (min_price < lowest_price) {
-      min_price := lowest_price;
-      meta := Value.setNat(meta, B.MIN_PRICE, ?min_price);
-    };
+
+    let min_base_amount = base_token_fee * fee_denom * min_fee_numer;
+    let min_quote_amount = quote_token_fee * fee_denom * min_fee_numer;
+    let min_price = min_quote_amount / min_base_amount;
+
     var max_expiry = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, B.MAX_ORDER_EXPIRY, 0)));
-    let lowest_max_expiry = Time64.HOURS(24);
-    let highest_max_expiry = lowest_max_expiry * 30;
-    if (max_expiry < lowest_max_expiry) {
-      max_expiry := lowest_max_expiry;
-      meta := Value.setNat(meta, B.MAX_ORDER_EXPIRY, ?(Nat64.toNat(lowest_max_expiry / 1_000_000_000)));
-    } else if (max_expiry > highest_max_expiry) {
-      max_expiry := highest_max_expiry;
-      meta := Value.setNat(meta, B.MAX_ORDER_EXPIRY, ?(Nat64.toNat(highest_max_expiry / 1_000_000_000)));
-    };
+    // let lowest_max_expiry = Time64.HOURS(24);
+    // let highest_max_expiry = lowest_max_expiry * 30;
+    // if (max_expiry < lowest_max_expiry) {
+    //   max_expiry := lowest_max_expiry;
+    //   meta := Value.setNat(meta, B.MAX_ORDER_EXPIRY, ?(Nat64.toNat(lowest_max_expiry / 1_000_000_000)));
+    // } else if (max_expiry > highest_max_expiry) {
+    //   max_expiry := highest_max_expiry;
+    //   meta := Value.setNat(meta, B.MAX_ORDER_EXPIRY, ?(Nat64.toNat(highest_max_expiry / 1_000_000_000)));
+    // };
     var min_expiry = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, B.MIN_ORDER_EXPIRY, 0)));
-    let lowest_min_expiry = Time64.HOURS(1);
-    let max_expiry_seconds = Nat64.toNat(max_expiry / 1_000_000_000);
-    if (min_expiry < lowest_min_expiry) {
-      min_expiry := lowest_min_expiry;
-      meta := Value.setNat(meta, B.MIN_ORDER_EXPIRY, ?(Nat64.toNat(min_expiry / 1_000_000_000)));
-    };
-    let min_ttl = Time64.DAYS(1);
+    // let lowest_min_expiry = Time64.HOURS(1);
+    // let max_expiry_seconds = Nat64.toNat(max_expiry / 1_000_000_000);
+    // if (min_expiry < lowest_min_expiry) {
+    //   min_expiry := lowest_min_expiry;
+    //   meta := Value.setNat(meta, B.MIN_ORDER_EXPIRY, ?(Nat64.toNat(min_expiry / 1_000_000_000)));
+    // };
     var ttl = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, B.TTL, 0)));
-    if (ttl < min_ttl) {
-      ttl := min_ttl;
-      meta := Value.setNat(meta, B.TTL, ?86400);
-    };
+    // let min_ttl = Time64.DAYS(1);
+    // if (ttl < min_ttl) {
+    //   ttl := min_ttl;
+    //   meta := Value.setNat(meta, B.TTL, ?86400);
+    // };
     let now = Time64.nanos();
     var tx_window = Nat64.fromNat(Value.getNat(meta, B.TX_WINDOW, 0));
-    let min_tx_window = Time64.MINUTES(15);
-    if (tx_window < min_tx_window) {
-      tx_window := min_tx_window;
-      meta := Value.setNat(meta, B.TX_WINDOW, ?(Nat64.toNat(tx_window)));
-    };
+    // let min_tx_window = Time64.MINUTES(15);
+    // if (tx_window < min_tx_window) {
+    //   tx_window := min_tx_window;
+    //   meta := Value.setNat(meta, B.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+    // };
     var permitted_drift = Nat64.fromNat(Value.getNat(meta, B.PERMITTED_DRIFT, 0));
-    let min_permitted_drift = Time64.SECONDS(5);
-    if (permitted_drift < min_permitted_drift) {
-      permitted_drift := min_permitted_drift;
-      meta := Value.setNat(meta, B.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
-    };
+    // let min_permitted_drift = Time64.SECONDS(5);
+    // if (permitted_drift < min_permitted_drift) {
+    //   permitted_drift := min_permitted_drift;
+    //   meta := Value.setNat(meta, B.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+    // };
     #Ok {
       meta;
       vault;
       base_token_id;
       quote_token_id;
-      amount_tick;
-      price_tick;
       fee_denom;
       maker_fee_numer;
       taker_fee_numer;

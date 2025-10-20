@@ -241,31 +241,31 @@ module {
       case _ return #Err("Metadata `" # I.MINTER # "` is not set properly.");
     };
     var fee = Value.getNat(meta, I.FEE, 0);
-    if (fee < 1) {
-      fee := 1;
-      meta := Value.setNat(meta, I.FEE, ?fee);
-    };
+    // if (fee < 1) {
+    //   fee := 1;
+    //   meta := Value.setNat(meta, I.FEE, ?fee);
+    // };
     let total_supply = Value.getNat(meta, I.TOTAL_SUPPLY, 0);
-    let min_supply = 1_000_000 * fee;
-    if (total_supply < min_supply) return #Err("Metadata `" # I.TOTAL_SUPPLY # "` must be at least " # debug_show min_supply);
+    // let min_supply = 1_000_000 * fee;
+    // if (total_supply < min_supply) return #Err("Metadata `" # I.TOTAL_SUPPLY # "` must be at least " # debug_show min_supply);
     var max_mint = Value.getNat(meta, I.MAX_MINT, 0);
-    if (max_mint < fee) {
-      max_mint := fee;
-      meta := Value.setNat(meta, I.MAX_MINT, ?max_mint);
-    };
+    // if (max_mint < fee) {
+    //   max_mint := fee;
+    //   meta := Value.setNat(meta, I.MAX_MINT, ?max_mint);
+    // };
     let now = Time64.nanos();
     var tx_window = Nat64.fromNat(Value.getNat(meta, I.TX_WINDOW, 0));
-    let min_tx_window = Time64.MINUTES(15);
-    if (tx_window < min_tx_window) {
-      tx_window := min_tx_window;
-      meta := Value.setNat(meta, I.TX_WINDOW, ?(Nat64.toNat(tx_window)));
-    };
+    // let min_tx_window = Time64.MINUTES(15);
+    // if (tx_window < min_tx_window) {
+    //   tx_window := min_tx_window;
+    //   meta := Value.setNat(meta, I.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+    // };
     var permitted_drift = Nat64.fromNat(Value.getNat(meta, I.PERMITTED_DRIFT, 0));
-    let min_permitted_drift = Time64.SECONDS(5);
-    if (permitted_drift < min_permitted_drift) {
-      permitted_drift := min_permitted_drift;
-      meta := Value.setNat(meta, I.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
-    };
+    // let min_permitted_drift = Time64.SECONDS(5);
+    // if (permitted_drift < min_permitted_drift) {
+    //   permitted_drift := min_permitted_drift;
+    //   meta := Value.setNat(meta, I.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+    // };
     let dedupe_start = now - tx_window - permitted_drift;
     let dedupe_end = now + permitted_drift;
     #Ok {

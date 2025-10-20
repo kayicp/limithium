@@ -38,10 +38,6 @@ shared (install) persistent actor class Canister(
         quote : Principal;
       };
       memo : { min : Nat; max : Nat };
-      tick : {
-        amount : Nat;
-        price : Nat;
-      };
       fee : {
         collector : Principal;
         numer : {
@@ -49,15 +45,14 @@ shared (install) persistent actor class Canister(
           taker : Nat;
         };
         denom : Nat;
+        close : { base : Nat; quote : Nat };
       };
-      price_min : Nat;
       secs : {
         ttl : Nat;
         tx_window : Nat;
         permitted_drift : Nat;
         order_expiry : { min : Nat; max : Nat };
       };
-      close_fee : { base : Nat; quote : Nat };
       reward : {
         token : Principal;
         multiplier : Nat;
@@ -79,20 +74,17 @@ shared (install) persistent actor class Canister(
       meta := Value.setPrincipal(meta, B.QUOTE_TOKEN, ?i.id.quote);
       meta := Value.setNat(meta, B.MIN_MEMO, ?i.memo.min);
       meta := Value.setNat(meta, B.MAX_MEMO, ?i.memo.max);
-      meta := Value.setNat(meta, B.AMOUNT_TICK, ?i.tick.amount);
-      meta := Value.setNat(meta, B.PRICE_TICK, ?i.tick.price);
       meta := Value.setPrincipal(meta, B.FEE_COLLECTOR, ?i.fee.collector);
       meta := Value.setNat(meta, B.MAKER_FEE_NUMER, ?i.fee.numer.maker);
       meta := Value.setNat(meta, B.TAKER_FEE_NUMER, ?i.fee.numer.taker);
       meta := Value.setNat(meta, B.TRADING_FEE_DENOM, ?i.fee.denom);
-      meta := Value.setNat(meta, B.MIN_PRICE, ?i.price_min);
       meta := Value.setNat(meta, B.TTL, ?i.secs.ttl);
       meta := Value.setNat(meta, B.TX_WINDOW, ?i.secs.tx_window);
       meta := Value.setNat(meta, B.PERMITTED_DRIFT, ?i.secs.permitted_drift);
       meta := Value.setNat(meta, B.MIN_ORDER_EXPIRY, ?i.secs.order_expiry.min);
       meta := Value.setNat(meta, B.MAX_ORDER_EXPIRY, ?i.secs.order_expiry.max);
-      meta := Value.setNat(meta, B.CANCEL_FEE_BASE, ?i.close_fee.base);
-      meta := Value.setNat(meta, B.CANCEL_FEE_QUOTE, ?i.close_fee.quote);
+      meta := Value.setNat(meta, B.CANCEL_FEE_BASE, ?i.fee.close.base);
+      meta := Value.setNat(meta, B.CANCEL_FEE_QUOTE, ?i.fee.close.quote);
       meta := Value.setPrincipal(meta, B.REWARD_TOKEN, ?i.reward.token);
       meta := Value.setNat(meta, B.REWARD_MULTIPLIER, ?i.reward.multiplier);
       meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?i.archive.max_update_batch);
@@ -165,13 +157,13 @@ shared (install) persistent actor class Canister(
 
       if (o.price < env.min_price) return #Err(#PriceTooLow { index; minimum_price = env.min_price });
 
-      let nearest_price = Book.nearTick(o.price, env.price_tick);
+      let nearest_price = Book.nearTick(o.price, env.min_price);
       if (o.price != nearest_price) return #Err(#PriceTooFar { index; nearest_price });
 
       let min_amount = Nat.max(env.min_base_amount, env.min_quote_amount / o.price);
       if (o.amount < min_amount) return #Err(#AmountTooLow { index; minimum_amount = min_amount });
 
-      let nearest_amount = Book.nearTick(o.amount, env.amount_tick);
+      let nearest_amount = Book.nearTick(o.amount, env.min_base_amount);
       if (o.amount != nearest_amount) return #Err(#AmountTooFar { index; nearest_amount });
 
       let instruction = if (o.is_buy) {
@@ -524,8 +516,6 @@ shared (install) persistent actor class Canister(
     newBlock(block_id, val);
     #Ok block_id;
   };
-
-  public shared query func archive_min_block() : async ?Nat = async RBTree.minKey(blocks);
 
   func getUser(p : Principal) : B.User = switch (RBTree.get(users, Principal.compare, p)) {
     case (?found) found;

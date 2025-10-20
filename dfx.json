@@ -23,8 +23,24 @@
       "main": "src/icrc1_canister/main.mo",
       "type": "motoko"
     },
+    "cketh_token": {
+      "main": "src/icrc1_canister/main.mo",
+      "type": "motoko"
+    },
     "xlt_token": {
       "main": "src/icrc1_canister/main.mo",
+      "type": "motoko"
+    },
+    "ckbtc_icp_book": {
+      "main": "src/book_canister/main.mo",
+      "type": "motoko"
+    },
+    "cketh_icp_book": {
+      "main": "src/book_canister/main.mo",
+      "type": "motoko"
+    },
+    "xlt_icp_book": {
+      "main": "src/book_canister/main.mo",
       "type": "motoko"
     },
     "frontend_canister": {

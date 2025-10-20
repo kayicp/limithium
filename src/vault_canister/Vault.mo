@@ -135,17 +135,17 @@ module {
     var meta = _meta;
     let now = Time64.nanos();
     var tx_window = Nat64.fromNat(Value.getNat(meta, V.TX_WINDOW, 0));
-    let min_tx_window = Time64.MINUTES(15);
-    if (tx_window < min_tx_window) {
-      tx_window := min_tx_window;
-      meta := Value.setNat(meta, V.TX_WINDOW, ?(Nat64.toNat(tx_window)));
-    };
+    // let min_tx_window = Time64.MINUTES(15);
+    // if (tx_window < min_tx_window) {
+    //   tx_window := min_tx_window;
+    //   meta := Value.setNat(meta, V.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+    // };
     var permitted_drift = Nat64.fromNat(Value.getNat(meta, V.PERMITTED_DRIFT, 0));
-    let min_permitted_drift = Time64.SECONDS(5);
-    if (permitted_drift < min_permitted_drift) {
-      permitted_drift := min_permitted_drift;
-      meta := Value.setNat(meta, V.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
-    };
+    // let min_permitted_drift = Time64.SECONDS(5);
+    // if (permitted_drift < min_permitted_drift) {
+    //   permitted_drift := min_permitted_drift;
+    //   meta := Value.setNat(meta, V.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+    // };
     #Ok {
       meta;
       now;
