@@ -20,6 +20,7 @@ import MerkleTree "../util/motoko/MerkleTree";
 import CertifiedData "mo:base/CertifiedData";
 import Text "mo:base/Text";
 import Buffer "mo:base/Buffer";
+import Nat8 "mo:base/Nat8";
 import ICRC3T "../util/motoko/ICRC-3/Types";
 import OptionX "../util/motoko/Option";
 import Cycles "mo:core/Cycles";
@@ -59,6 +60,23 @@ shared (install) persistent actor class Canister(
   system func postupgrade() = updateTipCert(); // https://gist.github.com/nomeata/f325fcd2a6692df06e38adedf9ca1877
 
   var users : I.Users = RBTree.empty();
+  var blocks = RBTree.empty<Nat, A.Block>();
+
+  func getUser(p : Principal) : I.Subaccounts = switch (RBTree.get(users, Principal.compare, p)) {
+    case (?found) found;
+    case _ RBTree.empty();
+  };
+  func saveUser(p : Principal, u : I.Subaccounts) = users := if (RBTree.size(u) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
+  func newBlock(block_id : Nat, val : Value.Type) {
+    let valh = Value.hash(val);
+    let idh = Blob.fromArray(LEB128.toUnsignedBytes(block_id));
+    blocks := RBTree.insert(blocks, Nat.compare, block_id, { val; valh; idh; locked = false });
+
+    tip_cert := MerkleTree.empty();
+    tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_INDEX)], idh);
+    tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_HASH)], valh);
+    updateTipCert();
+  };
 
   switch deploy {
     case (#Init i) {
@@ -83,11 +101,27 @@ shared (install) persistent actor class Canister(
       };
       meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?i.archive.max_update_batch);
       meta := Value.setNat(meta, A.MIN_TCYCLES, ?i.archive.min_creation_tcycles);
+
+      var user = getUser(i.token.minter);
+      var sub = Subaccount.get(null);
+      var subacc = ICRC1.getSubaccount(user, sub);
+      subacc := ICRC1.incBalance(subacc, i.token.max_supply);
+      user := ICRC1.saveSubaccount(user, sub, subacc);
+      saveUser(i.token.minter, user);
+
+      let mint_arg = {
+        to = { owner = i.token.minter; subaccount = null };
+        amount = i.token.max_supply;
+        from_subaccount = null;
+        created_at_time = null;
+        fee = null;
+        memo = null;
+      };
+      let (block_id, phash) = ArchiveL.getPhash(blocks);
+      newBlock(block_id, ICRC1.valueTransfer(install.caller, mint_arg, #Mint, 0, Time64.nanos(), phash));
     };
     case _ ();
   };
-
-  var blocks = RBTree.empty<Nat, A.Block>();
 
   var transfer_dedupes = RBTree.empty<(Principal, I.TransferArg), Nat>();
   var approve_dedupes = RBTree.empty<(Principal, I.ApproveArg), Nat>();
@@ -96,17 +130,6 @@ shared (install) persistent actor class Canister(
 
   var prev_mint : ?Nat = null;
   var mint_queue = RBTree.empty<Nat, I.Enqueue>();
-
-  func newBlock(block_id : Nat, val : Value.Type) {
-    let valh = Value.hash(val);
-    let idh = Blob.fromArray(LEB128.toUnsignedBytes(block_id));
-    blocks := RBTree.insert(blocks, Nat.compare, block_id, { val; valh; idh; locked = false });
-
-    tip_cert := MerkleTree.empty();
-    tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_INDEX)], idh);
-    tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_HASH)], valh);
-    updateTipCert();
-  };
 
   public shared ({ caller }) func icrc1_transfer(arg : I.TransferArg) : async Result.Type<Nat, I.TransferError> {
     if (not Value.getBool(meta, I.AVAILABLE, true)) return #Err(#TemporarilyUnavailable);
@@ -432,30 +455,39 @@ shared (install) persistent actor class Canister(
     true;
   };
 
-  public shared query func icrc1_name() : async Text = async "Limithium";
-  public shared query func icrc1_symbol() : async Text = async "XLT";
-  public shared query func icrc1_decimals() : async Nat8 = async 8;
-  public shared query func icrc1_fee() : async Nat = async 10_000;
-  public shared query func icrc1_metadata() : async [(Text, Value.Type)] = async [];
-  public shared query func icrc1_total_supply() : async Nat = async 0;
-  public shared query func icrc1_minting_account() : async ?I.Account = async null;
+  public shared query func icrc1_name() : async Text = async Value.getText(meta, I.NAME, "Limithium");
+  public shared query func icrc1_symbol() : async Text = async Value.getText(meta, I.SYMBOL, "XLT");
+  public shared query func icrc1_decimals() : async Nat8 = async Nat8.fromNat(Nat.max(Value.getNat(meta, I.DECIMALS, 8), 1));
+  public shared query func icrc1_fee() : async Nat = async Value.getNat(meta, I.FEE, 0);
+  public shared query func icrc1_metadata() : async [(Text, Value.Type)] = async RBTree.array(meta);
+  public shared query func icrc1_total_supply() : async Nat {
+    let max = Value.getNat(meta, I.MAX_SUPPLY, 0);
+    let minter = Value.getAccount(meta, I.MINTER, { owner = Principal.fromActor(Self); subaccount = null });
+    let u = getUser(minter.owner);
+    let s = Subaccount.get(minter.subaccount);
+    let subacc = ICRC1.getSubaccount(u, s);
+    max - subacc.balance;
+  };
+  public shared query func icrc1_minting_account() : async ?I.Account = async Value.metaAccount(meta, I.MINTER);
 
   public shared query func icrc1_balance_of(acc : I.Account) : async Nat {
-    0;
+    let u = getUser(acc.owner);
+    let s = Subaccount.get(acc.subaccount);
+    ICRC1.getSubaccount(u, s).balance;
   };
 
   type Standard = { name : Text; url : Text };
   public shared query func icrc1_supported_standards() : async [Standard] = async [];
 
   public shared query func icrc2_allowance(arg : I.AllowanceArg) : async I.Allowance {
-    { allowance = 0; expires_at = null };
+    let u = getUser(arg.account.owner);
+    let s = Subaccount.get(arg.account.subaccount);
+    let us = ICRC1.getSubaccount(u, s);
+    let sp = ICRC1.getSpender(us, arg.spender.owner);
+    let sps = Subaccount.get(arg.spender.subaccount);
+    let a = ICRC1.getApproval(sp, sps);
+    { a with expires_at = ?a.expires_at };
   };
-
-  func getUser(p : Principal) : I.Subaccounts = switch (RBTree.get(users, Principal.compare, p)) {
-    case (?found) found;
-    case _ RBTree.empty();
-  };
-  func saveUser(p : Principal, u : I.Subaccounts) = users := if (RBTree.size(u) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
 
   func checkMemo(m : ?Blob) : Result.Type<(), Error.Generic> = switch m {
     case (?defined) {
