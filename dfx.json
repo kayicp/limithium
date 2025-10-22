@@ -60,6 +60,15 @@
       "packtool": "mops sources"
     }
   },
+  "networks": {
+    "local": {
+      "bind": "127.0.0.1:5000",
+      "replica": {
+        "subnet_type": "system"
+      },
+      "type": "ephemeral"
+    }
+  },
   "output_env_file": ".env",
   "version": 1
 }

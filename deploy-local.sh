@@ -16,9 +16,11 @@ export CKETH_ID="ss2fx-dyaaa-aaaar-qacoq-cai"
 export XLT_ID="g4tto-rqaaa-aaaar-qageq-cai"
 export VAULT_ID="zk2nf-eaaaa-aaaar-qaiaq-cai"
 export INTERNET_ID="rdmx6-jaaaa-aaaaa-aaadq-cai"
+
 export CKBTC_ICP="gvqys-hyaaa-aaaar-qagfa-cai"
 export CKETH_ICP="sv3dd-oaaaa-aaaar-qacoa-cai"
 export XLT_ICP="vxkom-oyaaa-aaaar-qafda-cai"
+export FRONTEND="xob7s-iqaaa-aaaar-qacra-cai"
 
 dfx deploy internet_identity --no-wallet --specified-id $INTERNET_ID
 
@@ -34,10 +36,9 @@ dfx deploy vault_canister --no-wallet --specified-id $VAULT_ID --argument "(
         permitted_drift = 60 : nat;
       };
       fee_collector = principal \"$DEFAULT_PRINCIPAL\";
-      query_conf = record {
-        default_take = 50 : nat;
-        max_take = 100 : nat;
-        max_batch = 100 : nat;
+      query_max = record {
+        take = 100 : nat;
+        batch = 100 : nat;
       };
       archive = record {
         min_creation_tcycles = 4 : nat;
@@ -220,3 +221,37 @@ dfx deploy cketh_icp_book --no-wallet --specified-id $CKETH_ICP --argument "(
     }
   },
 )"
+
+dfx deploy frontend_canister --no-wallet --specified-id $FRONTEND
+
+dfx canister call vault_canister vault_enlist_token "record {
+  canister_id = principal \"$ICP_ID\";
+  deposit_fee = 0 : nat;
+  withdrawal_fee = 30_000 : nat;
+}"
+
+dfx canister call vault_canister vault_enlist_token "record {
+  canister_id = principal \"$CKBTC_ID\";
+  deposit_fee = 0 : nat;
+  withdrawal_fee = 30 : nat;
+}"
+
+dfx canister call vault_canister vault_enlist_token "record {
+  canister_id = principal \"$CKETH_ID\";
+  deposit_fee = 0 : nat;
+  withdrawal_fee = 6_000_000_000_000 : nat;
+}"
+
+dfx canister call vault_canister vault_enlist_token "record {
+  canister_id = principal \"$XLT_ID\";
+  deposit_fee = 0 : nat;
+  withdrawal_fee = 30_000 : nat;
+}"
+
+dfx canister call vault_canister vault_approve_executor "record {
+  canister_id = principal \"$CKBTC_ICP\";
+}"
+
+dfx canister call vault_canister vault_approve_executor "record {
+  canister_id = principal \"$CKETH_ICP\";
+}"

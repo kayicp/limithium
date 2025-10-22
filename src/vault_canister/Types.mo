@@ -11,7 +11,6 @@ module {
   public let TX_WINDOW = "vault:tx_window";
   public let PERMITTED_DRIFT = "vault:permitted_drift";
   public let FEE_COLLECTOR = "vault:fee_collector";
-  public let DEFAULT_TAKE = "vault:default_take_value";
   public let MAX_TAKE = "vault:max_take_value";
   public let MAX_QUERY_BATCH = "vault:max_query_batch_size";
 
@@ -65,7 +64,6 @@ module {
     #Withdraw : TokenArg;
   };
   public type Token = {
-    min_deposit : Nat;
     deposit_fee : Nat;
     withdrawal_fee : Nat;
   };

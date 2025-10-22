@@ -21,6 +21,7 @@ import LEB128 "mo:leb128";
 import MerkleTree "../util/motoko/MerkleTree";
 import CertifiedData "mo:base/CertifiedData";
 import Text "mo:base/Text";
+import Option "mo:base/Option";
 import ICRC3T "../util/motoko/ICRC-3/Types";
 import OptionX "../util/motoko/Option";
 import Cycles "mo:core/Cycles";
@@ -37,10 +38,9 @@ shared (install) persistent actor class Canister(
         permitted_drift : Nat;
       };
       fee_collector : Principal;
-      query_conf : {
-        default_take : Nat;
-        max_take : Nat;
-        max_batch : Nat;
+      query_max : {
+        take : Nat;
+        batch : Nat;
       };
       archive : {
         max_update_batch : Nat;
@@ -58,9 +58,8 @@ shared (install) persistent actor class Canister(
       meta := Value.setNat(meta, V.TX_WINDOW, ?i.secs.tx_window);
       meta := Value.setNat(meta, V.PERMITTED_DRIFT, ?i.secs.permitted_drift);
       meta := Value.setAccountP(meta, V.FEE_COLLECTOR, ?{ owner = i.fee_collector; subaccount = null });
-      meta := Value.setNat(meta, V.DEFAULT_TAKE, ?i.query_conf.default_take);
-      meta := Value.setNat(meta, V.MAX_TAKE, ?i.query_conf.max_take);
-      meta := Value.setNat(meta, V.MAX_QUERY_BATCH, ?i.query_conf.max_batch);
+      meta := Value.setNat(meta, V.MAX_TAKE, ?i.query_max.take);
+      meta := Value.setNat(meta, V.MAX_QUERY_BATCH, ?i.query_max.batch);
       meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?i.archive.max_update_batch);
       meta := Value.setNat(meta, A.MIN_TCYCLES, ?i.archive.min_creation_tcycles);
     };
@@ -78,6 +77,33 @@ shared (install) persistent actor class Canister(
   var deposit_dedupes : V.Dedupes = RBTree.empty();
   var withdraw_dedupes : V.Dedupes = RBTree.empty();
 
+  public shared query func vault_max_take_value() : async ?Nat = async Value.metaNat(meta, V.MAX_TAKE);
+  public shared query func vault_max_query_batch_size() : async ?Nat = async Value.metaNat(meta, V.MAX_QUERY_BATCH);
+
+  public shared query func vault_tokens(prev : ?Principal, take : ?Nat) : async [Principal] {
+    let maxt = Nat.min(Value.getNat(meta, V.MAX_TAKE, RBTree.size(tokens)), RBTree.size(tokens));
+    RBTree.pageKey(tokens, Principal.compare, prev, Nat.max(Option.get(take, maxt), 1));
+  };
+
+  public shared query func vault_withdrawal_fees_of(token_ids : [Principal]) : async [?Nat] {
+    let maxq = Nat.min(Value.getNat(meta, V.MAX_QUERY_BATCH, RBTree.size(tokens)), RBTree.size(tokens));
+    let limit = Nat.min(token_ids.size(), maxq);
+    let res = Buffer.Buffer<?Nat>(limit);
+    label collecting for (p in token_ids.vals()) {
+      switch (RBTree.get(tokens, Principal.compare, p)) {
+        case (?found) res.add(?found.withdrawal_fee);
+        case _ res.add(null);
+      };
+      if (res.size() >= limit) break collecting;
+    };
+    Buffer.toArray(res);
+  };
+
+  public shared query func vault_executors(prev : ?Principal, take : ?Nat) : async [Principal] {
+    let maxt = Nat.min(Value.getNat(meta, V.MAX_TAKE, RBTree.size(executors)), RBTree.size(executors));
+    RBTree.pageKey(executors, Principal.compare, prev, Nat.max(Option.get(take, maxt), 1));
+  };
+
   public shared ({ caller }) func vault_deposit(arg : V.TokenArg) : async V.DepositRes {
     if (not Value.getBool(meta, V.AVAILABLE, true)) return Error.text("Unavailable");
     let user_acct = { owner = caller; subaccount = arg.subaccount };
@@ -87,7 +113,7 @@ shared (install) persistent actor class Canister(
       case (?found) found;
       case _ return Error.text("Unsupported token");
     };
-    if (arg.amount < token.min_deposit) return #Err(#AmountTooLow { minimum_amount = token.min_deposit });
+    if (arg.amount < token.withdrawal_fee + 1) return #Err(#AmountTooLow { minimum_amount = token.withdrawal_fee + 1 });
     switch (arg.fee) {
       case (?defined) if (defined != token.deposit_fee) return #Err(#BadFee { expected_fee = token.deposit_fee });
       case _ ();
@@ -357,25 +383,16 @@ shared (install) persistent actor class Canister(
 
   public shared ({ caller }) func vault_enlist_token({
     canister_id : Principal;
-    min_deposit : Nat;
     deposit_fee : Nat;
     withdrawal_fee : Nat;
   }) : async Result.Type<(), Error.Generic> {
     if (not Principal.isController(caller)) return Error.text("Caller is not controller");
 
-    if (min_deposit <= deposit_fee) return Error.text("min_deposit must be larger than deposit_fee");
-
     let token = actor (Principal.toText(canister_id)) : ICRC1.Canister;
     let transfer_fee = await token.icrc1_fee();
     if (withdrawal_fee <= transfer_fee) return Error.text("withdrawal_fee must be larger than transfer fee (" # debug_show transfer_fee # ")");
 
-    if (min_deposit <= withdrawal_fee) return Error.text("min_deposit must be larger than withdrawal_fee");
-
-    let config = switch (RBTree.get(tokens, Principal.compare, canister_id)) {
-      case (?found) ({ found with min_deposit; deposit_fee; withdrawal_fee });
-      case _ ({ min_deposit; deposit_fee; withdrawal_fee });
-    };
-    tokens := RBTree.insert(tokens, Principal.compare, canister_id, config);
+    tokens := RBTree.insert(tokens, Principal.compare, canister_id, { deposit_fee; withdrawal_fee });
     #Ok;
   };
 

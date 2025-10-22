@@ -96,6 +96,7 @@ module {
       case (#Transfer { to }) {
         map := Value.setText(map, "op", ?"xfer");
         map := Value.setAccountP(map, "from", ?i.account);
+        map := Value.setAccountP(map, "to", ?to);
       };
     };
     map := Value.setPrincipal(map, "token", ?i.token);
