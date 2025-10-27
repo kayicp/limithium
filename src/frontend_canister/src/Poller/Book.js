@@ -50,12 +50,43 @@ class Book {
       const account = { owner : p, subaccount: [] };
 
       try {
+        const user_buy_lvls = new Map(); 
         while (p != null) {
           let prev = [];
-          const 
+          const buy_lvls = await this.anon.book_buy_prices_by(prev, []);
+          if (buy_lvls.length == 0) break;
+          for (const [lvl, oid] of buy_lvls) {
+            user_buy_lvls.set(lvl, oid);
+            const o = this.orders.get(oid);
+            if (!o) {
+              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids));
+              this.new_oids.push(oid);
+            }
+          }
         }
+        this.user_buy_lvls = user_buy_lvls;
       } catch (cause) {
         console.error("user's buy levels", cause)
+      }
+
+      try {
+        const user_sell_lvls = new Map(); 
+        while (p != null) {
+          let prev = [];
+          const sell_lvls = await this.anon.book_sell_prices_by(prev, []);
+          if (sell_lvls.length == 0) break;
+          for (const [lvl, oid] of sell_lvls) {
+            user_sell_lvls.set(lvl, oid);
+            const o = this.orders.get(oid);
+            if (!o) {
+              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids));
+              this.new_oids.push(oid);
+            }
+          }
+        }
+        this.user_sell_lvls = user_sell_lvls;
+      } catch (cause) {
+        console.error("user's sell levels", cause)
       }
 
       try { // todo: this should be on a separate job
@@ -69,7 +100,7 @@ class Book {
               this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids));
               this.new_oids.push(oid);
               this.user_buys.push(oid);
-            }
+            } else break;
           }
         }
       } catch (cause) {

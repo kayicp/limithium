@@ -124,28 +124,37 @@ shared (install) persistent actor class Canister(
   var prev_build = null : ?Nat;
 
   public shared query func book_buy_orders_by(acc : ICRC1T.Account, prev : ?Nat, take : ?Nat) : async [Nat] {
-
+    let subacc = Book.getSubaccount(getUser(acc.owner), Subaccount.get(acc.subaccount));
+    let maxt = Value.getNat(meta, B.MAX_TAKE, RBTree.size(subacc.buys));
+    RBTree.pageKey(subacc.buys, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
   };
 
   public shared query func book_sell_orders_by(acc : ICRC1T.Account, prev : ?Nat, take : ?Nat) : async [Nat] {
-
+    let subacc = Book.getSubaccount(getUser(acc.owner), Subaccount.get(acc.subaccount));
+    let maxt = Value.getNat(meta, B.MAX_TAKE, RBTree.size(subacc.sells));
+    RBTree.pageKey(subacc.sells, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
   };
 
   public shared query func book_buy_prices_by(acc : ICRC1T.Account, prev : ?Nat, take : ?Nat) : async [(Nat, Nat)] {
-
+    let subacc = Book.getSubaccount(getUser(acc.owner), Subaccount.get(acc.subaccount));
+    let maxt = Value.getNat(meta, B.MAX_TAKE, RBTree.size(subacc.buy_lvls));
+    RBTree.pageReverse(subacc.buy_lvls, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
   };
 
   public shared query func book_sell_prices_by(acc : ICRC1T.Account, prev : ?Nat, take : ?Nat) : async [(Nat, Nat)] {
-
+    let subacc = Book.getSubaccount(getUser(acc.owner), Subaccount.get(acc.subaccount));
+    let maxt = Value.getNat(meta, B.MAX_TAKE, RBTree.size(subacc.sell_lvls));
+    RBTree.page(subacc.sell_lvls, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
   };
 
   public shared query func book_order_ids(prev : ?Nat, take : ?Nat) : async [Nat] {
-    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(orders)), RBTree.size(orders));
+    let maxt = Value.getNat(meta, B.MAX_TAKE, RBTree.size(orders));
     RBTree.pageKey(orders, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
   };
 
   public shared query func book_order_sides_of(oids : [Nat]) : async [?Bool] {
-    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(orders)), RBTree.size(orders));
+    let maxt = Value.getNat(meta, B.MAX_TAKE, RBTree.size(orders));
+
   };
 
   public shared query func book_order_prices_of(oids : [Nat]) : async [?Nat] {
