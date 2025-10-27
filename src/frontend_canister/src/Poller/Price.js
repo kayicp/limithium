@@ -19,7 +19,7 @@ class Price {
 				getting: while (true) {
 					const oids = await orders_at(this.level, prev, []);
 					if (oids.length == 0) break getting;
-					prev = oids[oids.length - 1];
+					prev = [oids[oids.length - 1]];
 					for (const oid of oids) {
 						_oids.add(oid);
 						const o = orders.get(oid);

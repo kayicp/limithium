@@ -9,6 +9,11 @@ class Book {
   orders = new Map(); // only best and user's orders
   trades = new Map();
 
+  user_buys = [];
+  user_sells = [];
+  user_buy_lvls = new Map();
+  user_sell_lvls = new Map();
+
   asks = [];
   bids = [];
   new_oids = [];
@@ -39,6 +44,54 @@ class Book {
         }
       } catch (cause) {
         console.error('prices:', cause);
+      }
+
+      const p = wallet.get().principal;
+      const account = { owner : p, subaccount: [] };
+
+      try {
+        while (p != null) {
+          let prev = [];
+          const 
+        }
+      } catch (cause) {
+        console.error("user's buy levels", cause)
+      }
+
+      try { // todo: this should be on a separate job
+        while (p != null) {
+          const prev = this.user_buys.length > 0? [this.user_buys[this.user_buys.length - 1]] : [];
+          const buys = await this.anon.book_buy_orders_by(account, prev, []);
+          if (buys.length == 0) break;
+          for (const oid of buys) {
+            const o = this.orders.get(oid);
+            if (!o) {
+              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids));
+              this.new_oids.push(oid);
+              this.user_buys.push(oid);
+            }
+          }
+        }
+      } catch (cause) {
+        console.error("user's buys", cause)
+      }
+
+      try { // todo: this should be on a separate job
+        while (p != null) {
+          const prev = this.user_sells.length > 0? [this.user_sells[this.user_sells.length - 1]] : [];
+          const sells = await this.anon.book_sell_orders_by(account, prev, []);
+          if (sells.length == 0) break;
+          for (const oid of sells) {
+            const o = this.orders.get(oid);
+            if (!o) {
+              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids));
+              this.new_oids.push(oid);
+              this.user_sells.push(oid);
+            }
+          }
+        }
+      } catch (cause) {
+        console.error("user's sells", cause)
       }
 
       try {

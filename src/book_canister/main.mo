@@ -123,6 +123,22 @@ shared (install) persistent actor class Canister(
   var rewards = RBTree.empty<Nat, (ICRC1T.Enqueue, locked : Bool)>();
   var prev_build = null : ?Nat;
 
+  public shared query func book_buy_orders_by(acc : ICRC1T.Account, prev : ?Nat, take : ?Nat) : async [Nat] {
+
+  };
+
+  public shared query func book_sell_orders_by(acc : ICRC1T.Account, prev : ?Nat, take : ?Nat) : async [Nat] {
+
+  };
+
+  public shared query func book_buy_prices_by(acc : ICRC1T.Account, prev : ?Nat, take : ?Nat) : async [(Nat, Nat)] {
+
+  };
+
+  public shared query func book_sell_prices_by(acc : ICRC1T.Account, prev : ?Nat, take : ?Nat) : async [(Nat, Nat)] {
+
+  };
+
   public shared query func book_order_ids(prev : ?Nat, take : ?Nat) : async [Nat] {
     let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(orders)), RBTree.size(orders));
     RBTree.pageKey(orders, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
@@ -132,11 +148,11 @@ shared (install) persistent actor class Canister(
     let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(orders)), RBTree.size(orders));
   };
 
-  public shared query func book_order_prices_of(oids : [Nat]) : async [Nat] {
+  public shared query func book_order_prices_of(oids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_order_closed_timestamps_of(oids : [Nat]) : async [Nat64] {
+  public shared query func book_order_closed_timestamps_of(oids : [Nat]) : async [?Nat64] {
 
   };
 
@@ -144,19 +160,19 @@ shared (install) persistent actor class Canister(
 
   };
 
-  public shared query func book_order_expiry_timestamps_of(oids : [Nat]) : async [Nat64] {
+  public shared query func book_order_expiry_timestamps_of(oids : [Nat]) : async [?Nat64] {
 
   };
 
-  public shared query func book_order_initial_amounts_of(oids : [Nat]) : async [Nat] {
+  public shared query func book_order_initial_amounts_of(oids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_order_locked_amounts_of(oids : [Nat]) : async [Nat] {
+  public shared query func book_order_locked_amounts_of(oids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_order_filled_amounts_of(oids : [Nat]) : async [Nat] {
+  public shared query func book_order_filled_amounts_of(oids : [Nat]) : async [?Nat] {
 
   };
 
@@ -168,7 +184,7 @@ shared (install) persistent actor class Canister(
 
   };
 
-  public shared query func book_order_created_timestamps_of(oids : [Nat]) : async [Nat64] {
+  public shared query func book_order_created_timestamps_of(oids : [Nat]) : async [?Nat64] {
 
   };
 
@@ -188,51 +204,51 @@ shared (install) persistent actor class Canister(
     // newest to oldest
   };
 
-  public shared query func book_trade_sell_ids_of(tids : []) : async [Nat] {
+  public shared query func book_trade_sell_ids_of(tids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_trade_sell_bases_of(tids : []) : async [Nat] {
+  public shared query func book_trade_sell_bases_of(tids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_trade_sell_fee_quotes_of(tids : []) : async [Nat] {
+  public shared query func book_trade_sell_fee_quotes_of(tids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_trade_sell_executions_of(tids : []) : async [Nat] {
+  public shared query func book_trade_sell_executions_of(tids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_trade_sell_fee_executions_of(tids : []) : async [Nat] {
+  public shared query func book_trade_sell_fee_executions_of(tids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_trade_buy_ids_of(tids : []) : async [Nat] {
+  public shared query func book_trade_buy_ids_of(tids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_trade_buy_quotes_of(tids : []) : async [Nat] {
+  public shared query func book_trade_buy_quotes_of(tids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_trade_buy_fee_bases_of(tids : []) : async [Nat] {
+  public shared query func book_trade_buy_fee_bases_of(tids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_trade_buy_executions_of(tids : []) : async [Nat] {
+  public shared query func book_trade_buy_executions_of(tids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_trade_buy_fee_executions_of(tids : []) : async [Nat] {
+  public shared query func book_trade_buy_fee_executions_of(tids : [Nat]) : async [?Nat] {
 
   };
 
-  public shared query func book_trade_timestamps_of(tids : []) : async [Nat64] {
+  public shared query func book_trade_timestamps_of(tids : [Nat]) : async [?Nat64] {
 
   };
 
-  public shared query func book_trade_blocks_of(tids : []) : async [Nat] {
+  public shared query func book_trade_blocks_of(tids : [Nat]) : async [?Nat] {
 
   };
 
