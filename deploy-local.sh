@@ -179,6 +179,10 @@ dfx deploy ckbtc_icp_book --no-wallet --specified-id $CKBTC_ICP --argument "(
         permitted_drift = 60 : nat;
         order_expiry = record { max = 3_600 : nat; min = 1_800 : nat };
       };
+      query_max = record {
+        take = 100 : nat;
+        batch = 100 : nat;
+      };
       archive = record {
         min_creation_tcycles = 4 : nat;
         max_update_batch = 10 : nat;
@@ -212,6 +216,10 @@ dfx deploy cketh_icp_book --no-wallet --specified-id $CKETH_ICP --argument "(
         tx_window = 3_600 : nat;
         permitted_drift = 60 : nat;
         order_expiry = record { max = 3_600 : nat; min = 1_800 : nat };
+      };
+      query_max = record {
+        take = 100 : nat;
+        batch = 100 : nat;
       };
       archive = record {
         min_creation_tcycles = 4 : nat;

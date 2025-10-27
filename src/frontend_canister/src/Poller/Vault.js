@@ -1,15 +1,15 @@
 import { createActor, canisterId } from 'declarations/vault_canister';
 import Token from './Token';
+import Book from './Book';
 
 class Vault {
-  id = null;
   wallet = null;
   anon = null;
 
   tokens = new Map();
+  books = new Map();
 
   constructor(wallet) {
-		this.id = canisterId
     this.wallet = wallet;
     this.anon = createActor(canisterId);
     this.#init();
@@ -17,14 +17,23 @@ class Vault {
 
   async #init() {
     try {
+      const result = await this.anon.vault_executors([], []);
+      
+      for (const p of result) {
+        this.books.set(p, new Book(p, this.wallet));
+      }
+    } catch (cause) {
+      throw new Error('get books:', { cause });
+    }
+
+    try {
       const result = await this.anon.vault_tokens([], []);
       
       for (const p of result) {
-        this.tokens.set(p, { 
-          min_deposit: 0, 
+        this.tokens.set(p, {
           withdrawal_fee: 0,
           balance: 0,
-          actor: new Token(p, canisterId, wallet)
+          actor: new Token(p, canisterId, this.wallet)
         });
       }      
     } catch (cause) {
@@ -33,21 +42,7 @@ class Vault {
     if (this.tokens.size == 0) throw new Error('no tokens');
   
     const t_ids = [...this.tokens.keys()];
-    
-    try {
-      const min_deposits = await this.anon.vault_min_deposits_of(t_ids);
-      
-      for (let i = 0; i < t_ids.length; i++) {
-        const token_id = t_ids[i];
-        const min_deposit = min_deposits[i]; // 
-        if (min_deposit.length > 0) {
-          this.tokens.get(token_id).min_deposit = min_deposit[0];
-        }
-      }
-    } catch (cause) {
-      throw new Error('get min_deposits:', { cause });
-    }
-  
+
     try {
       const withdrawal_fees = await this.anon.vault_withdrawal_fees_of(t_ids);
       
@@ -68,10 +63,8 @@ class Vault {
       const p = this.wallet.get().principal;
       if (p == null) return;
       try {
-        const accounts = t_ids.map(token_id => ({
-          token: token_id,
-          account: { owner: p, subaccount: [] }
-        }));
+        const account = { owner: p, subaccount: [] };
+        const accounts = t_ids.map(token => ({ token, account }));
 
         const bals = await this.anon.vault_unlocked_balances_of(accounts);
 
@@ -83,6 +76,7 @@ class Vault {
       }
     }, 2000);
   }
+
 }
 
 export default Vault;

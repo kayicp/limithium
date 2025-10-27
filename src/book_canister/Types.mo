@@ -33,6 +33,9 @@ module {
   public let REWARD_TOKEN = "book:reward_token_id";
   public let REWARD_MULTIPLIER = "book:reward_multiplier";
 
+  public let MAX_TAKE = "vault:max_take_value";
+  public let MAX_QUERY_BATCH = "vault:max_query_batch_size";
+
   public type Nats = RBTree.Type<Nat, ()>;
   public type Expiries = RBTree.Type<Nat64, Nats>;
   public type Amount = {

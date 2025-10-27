@@ -61,6 +61,7 @@ shared (install) persistent actor class Canister(
         max_update_batch : Nat;
         min_creation_tcycles : Nat;
       };
+      query_max : { batch : Nat; take : Nat };
     };
     #Upgrade;
   }
@@ -87,6 +88,9 @@ shared (install) persistent actor class Canister(
       meta := Value.setNat(meta, B.CANCEL_FEE_QUOTE, ?i.fee.close.quote);
       meta := Value.setPrincipal(meta, B.REWARD_TOKEN, ?i.reward.token);
       meta := Value.setNat(meta, B.REWARD_MULTIPLIER, ?i.reward.multiplier);
+      meta := Value.setNat(meta, B.MAX_TAKE, ?i.query_max.take);
+      meta := Value.setNat(meta, B.MAX_QUERY_BATCH, ?i.query_max.batch);
+
       meta := Value.setNat(meta, A.MAX_UPDATE_BATCH_SIZE, ?i.archive.max_update_batch);
       meta := Value.setNat(meta, A.MIN_TCYCLES, ?i.archive.min_creation_tcycles);
     };
@@ -118,6 +122,142 @@ shared (install) persistent actor class Canister(
   var reward_id = 0;
   var rewards = RBTree.empty<Nat, (ICRC1T.Enqueue, locked : Bool)>();
   var prev_build = null : ?Nat;
+
+  public shared query func book_order_ids(prev : ?Nat, take : ?Nat) : async [Nat] {
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(orders)), RBTree.size(orders));
+    RBTree.pageKey(orders, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
+  };
+
+  public shared query func book_order_sides_of(oids : [Nat]) : async [?Bool] {
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(orders)), RBTree.size(orders));
+  };
+
+  public shared query func book_order_prices_of(oids : [Nat]) : async [Nat] {
+
+  };
+
+  public shared query func book_order_closed_timestamps_of(oids : [Nat]) : async [Nat64] {
+
+  };
+
+  public shared query func book_order_closed_reasons_of(oids : [Nat]) : async [?B.CloseReason] {
+
+  };
+
+  public shared query func book_order_expiry_timestamps_of(oids : [Nat]) : async [Nat64] {
+
+  };
+
+  public shared query func book_order_initial_amounts_of(oids : [Nat]) : async [Nat] {
+
+  };
+
+  public shared query func book_order_locked_amounts_of(oids : [Nat]) : async [Nat] {
+
+  };
+
+  public shared query func book_order_filled_amounts_of(oids : [Nat]) : async [Nat] {
+
+  };
+
+  public shared query func book_order_owners_of(oids : [Nat]) : async [?Principal] {
+
+  };
+
+  public shared query func book_order_subaccounts_of(oids : [Nat]) : async [?Blob] {
+
+  };
+
+  public shared query func book_order_created_timestamps_of(oids : [Nat]) : async [Nat64] {
+
+  };
+
+  public shared query func book_order_blocks_of(oids : [Nat]) : async [?Nat] {
+
+  };
+
+  public shared query func book_order_executions_of(oids : [Nat]) : async [?Nat] {
+
+  };
+
+  public shared query func book_order_trades_of(oid : Nat, prev : ?Nat, take : ?Nat) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_ids(prev : ?Nat, take : ?Nat) : async [Nat] {
+    // newest to oldest
+  };
+
+  public shared query func book_trade_sell_ids_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_sell_bases_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_sell_fee_quotes_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_sell_executions_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_sell_fee_executions_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_buy_ids_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_buy_quotes_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_buy_fee_bases_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_buy_executions_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_buy_fee_executions_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_trade_timestamps_of(tids : []) : async [Nat64] {
+
+  };
+
+  public shared query func book_trade_blocks_of(tids : []) : async [Nat] {
+
+  };
+
+  public shared query func book_ask_prices(prev : ?Nat, take : ?Nat) : async [Nat] {
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(sell_book)), RBTree.size(sell_book));
+    RBTree.pageKey(sell_book, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
+  };
+
+  public shared query func book_bid_prices(prev : ?Nat, take : ?Nat) : async [Nat] {
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(buy_book)), RBTree.size(buy_book));
+    RBTree.pageKeyReverse(buy_book, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
+  };
+
+  public shared query func book_asks_at(price : Nat, prev : ?Nat, take : ?Nat) : async [Nat] {
+    let lvl = Book.getLevel(sell_book, price);
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(lvl.orders)), RBTree.size(lvl.orders));
+    RBTree.pageKey(lvl.orders, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
+  };
+
+  public shared query func book_bids_at(price : Nat, prev : ?Nat, take : ?Nat) : async [Nat] {
+    let lvl = Book.getLevel(buy_book, price);
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(lvl.orders)), RBTree.size(lvl.orders));
+    RBTree.pageKey(lvl.orders, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
+  };
+
   // public shared query func book_base_balances_of() : async [Nat] {
   //   []
   // };
