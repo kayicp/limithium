@@ -153,112 +153,348 @@ shared (install) persistent actor class Canister(
   };
 
   public shared query func book_order_sides_of(oids : [Nat]) : async [?Bool] {
-    let maxt = Value.getNat(meta, B.MAX_TAKE, RBTree.size(orders));
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Bool>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(?found.is_buy);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_prices_of(oids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(?found.price);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_closed_timestamps_of(oids : [Nat]) : async [?Nat64] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Nat64>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) switch (found.closed) {
+          case (?yes) res.add(?yes.at);
+          case _ res.add(null);
+        };
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_closed_reasons_of(oids : [Nat]) : async [?B.CloseReason] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?B.CloseReason>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) switch (found.closed) {
+          case (?yes) res.add(?yes.reason);
+          case _ res.add(null);
+        };
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_expiry_timestamps_of(oids : [Nat]) : async [?Nat64] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Nat64>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(?found.expires_at);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_initial_amounts_of(oids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(?found.base.initial);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_locked_amounts_of(oids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(?found.base.locked);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_filled_amounts_of(oids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(?found.base.filled);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_owners_of(oids : [Nat]) : async [?Principal] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Principal>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(?found.owner);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_subaccounts_of(oids : [Nat]) : async [?Blob] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Blob>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(Subaccount.opt(found.sub));
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_created_timestamps_of(oids : [Nat]) : async [?Nat64] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Nat64>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(?found.created_at);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_blocks_of(oids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(?found.block);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_executions_of(oids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, oids.size()), oids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (oid in oids.vals()) {
+      switch (RBTree.get(orders, Nat.compare, oid)) {
+        case (?found) res.add(?found.execute);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_order_trades_of(oid : Nat, prev : ?Nat, take : ?Nat) : async [Nat] {
-
+    let o = switch (RBTree.get(orders, Nat.compare, oid)) {
+      case (?found) found;
+      case _ return [];
+    };
+    let maxt = Value.getNat(meta, B.MAX_TAKE, RBTree.size(o.trades));
+    RBTree.pageKey(o.trades, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
   };
 
   public shared query func book_trade_ids(prev : ?Nat, take : ?Nat) : async [Nat] {
-    // newest to oldest
+    let maxt = Value.getNat(meta, B.MAX_TAKE, RBTree.size(trades)); // newest to oldest
+    RBTree.pageKeyReverse(trades, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
   };
 
   public shared query func book_trade_sell_ids_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.sell.id);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_sell_bases_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.sell.base);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_sell_fee_quotes_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.sell.fee_quote);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_sell_executions_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.sell.execute);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_sell_fee_executions_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.sell.fee_execute);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_buy_ids_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.buy.id);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_buy_quotes_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.buy.quote);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_buy_fee_bases_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.buy.fee_base);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_buy_executions_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.buy.execute);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_buy_fee_executions_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.buy.fee_execute);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_timestamps_of(tids : [Nat]) : async [?Nat64] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat64>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.at);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_trade_blocks_of(tids : [Nat]) : async [?Nat] {
-
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, tids.size()), tids.size());
+    let res = Buffer.Buffer<?Nat>(maxt);
+    label batching for (tid in tids.vals()) {
+      switch (RBTree.get(trades, Nat.compare, tid)) {
+        case (?found) res.add(?found.block);
+        case _ res.add(null);
+      };
+      if (res.size() >= maxt) break batching;
+    };
+    Buffer.toArray(res);
   };
 
   public shared query func book_ask_prices(prev : ?Nat, take : ?Nat) : async [Nat] {
