@@ -1,4 +1,4 @@
-class Base {
+class Amount {
 	initial = 0n;
 	locked = 0n;
 	filled = 0n;
@@ -27,4 +27,4 @@ class Base {
 		this.filled *= n;
 	}
 }
-export default Base
+export default Amount

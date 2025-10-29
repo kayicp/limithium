@@ -426,8 +426,8 @@ shared (install) persistent actor class Canister(
   };
 
   public shared query func vault_unlocked_balances_of(args : [{ account : ICRC1T.Account; token : Principal }]) : async [Nat] {
-    let max_query_batch = Value.getNat(meta, V.MAX_QUERY_BATCH, 0);
-    let res = Buffer.Buffer<Nat>(max_query_batch);
+    let max_query_batch = Value.getNat(meta, V.MAX_QUERY_BATCH, args.size());
+    let res = Buffer.Buffer<Nat>(args.size());
     label batching for (a in args.vals()) {
       let user = Vault.getUser(users, a.account.owner);
       let sub = Subaccount.get(a.account.subaccount);
@@ -440,8 +440,8 @@ shared (install) persistent actor class Canister(
   };
 
   public shared query func vault_locked_balances_of(args : [{ account : ICRC1T.Account; token : Principal }]) : async [Nat] {
-    let max_query_batch = Value.getNat(meta, V.MAX_QUERY_BATCH, 0);
-    let res = Buffer.Buffer<Nat>(max_query_batch);
+    let max_query_batch = Value.getNat(meta, V.MAX_QUERY_BATCH, args.size());
+    let res = Buffer.Buffer<Nat>(args.size());
     label batching for (a in args.vals()) {
       let user = Vault.getUser(users, a.account.owner);
       let sub = Subaccount.get(a.account.subaccount);

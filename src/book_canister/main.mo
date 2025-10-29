@@ -107,8 +107,6 @@ shared (install) persistent actor class Canister(
   var orders = RBTree.empty<Nat, B.Order>();
   var orders_by_expiry : B.Expiries = RBTree.empty();
 
-  var base = Book.newAmount(0); // sell unit
-  var quote = Book.newAmount(0); // buy unit
   var sell_book : B.Book = RBTree.empty();
   var buy_book : B.Book = RBTree.empty();
 
@@ -509,14 +507,14 @@ shared (install) persistent actor class Canister(
 
   public shared query func book_asks_at(price : Nat, prev : ?Nat, take : ?Nat) : async [Nat] {
     let lvl = Book.getLevel(sell_book, price);
-    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(lvl.orders)), RBTree.size(lvl.orders));
-    RBTree.pageKey(lvl.orders, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(lvl)), RBTree.size(lvl));
+    RBTree.pageKey(lvl, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
   };
 
   public shared query func book_bids_at(price : Nat, prev : ?Nat, take : ?Nat) : async [Nat] {
     let lvl = Book.getLevel(buy_book, price);
-    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(lvl.orders)), RBTree.size(lvl.orders));
-    RBTree.pageKey(lvl.orders, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
+    let maxt = Nat.min(Value.getNat(meta, B.MAX_TAKE, RBTree.size(lvl)), RBTree.size(lvl));
+    RBTree.pageKey(lvl, Nat.compare, prev, Nat.max(Option.get(take, maxt), 1));
   };
 
   // public shared query func book_base_balances_of() : async [Nat] {
@@ -635,8 +633,6 @@ shared (install) persistent actor class Canister(
     };
     user := getUser(caller);
     subacc := Book.getSubaccount(user, sub);
-    base := Book.incAmount(base, Book.newAmount(lbase));
-    quote := Book.incAmount(quote, Book.newAmount(lquote));
     let oids = Buffer.Buffer<Nat>(arg.orders.size());
     let ovalues = Buffer.Buffer<Value.Type>(arg.orders.size());
     let (block_id, phash) = ArchiveL.getPhash(blocks);
@@ -653,22 +649,18 @@ shared (install) persistent actor class Canister(
       let new_order = newOrder(o);
       var price = Book.getLevel(sell_book, o_price);
       price := Book.levelNewOrder(price, order_id);
-      price := Book.levelIncAmount(price, new_order.base);
       sell_book := Book.saveLevel(sell_book, o_price, price);
       subacc := Book.subaccNewSell(subacc, order_id);
       subacc := Book.subaccNewSellLevel(subacc, order_id, new_order);
-      subacc := Book.subaccIncBase(subacc, new_order.base);
       order_id += 1;
     };
     for ((o_price, o) in RBTree.entriesReverse(lbuys)) {
       let new_order = newOrder(o);
       var price = Book.getLevel(buy_book, o_price);
       price := Book.levelNewOrder(price, order_id);
-      price := Book.levelIncAmount(price, new_order.base);
       buy_book := Book.saveLevel(buy_book, o_price, price);
       subacc := Book.subaccNewBuy(subacc, order_id);
       subacc := Book.subaccNewBuyLevel(subacc, order_id, new_order);
-      subacc := Book.subaccIncQuote(subacc, Book.mulAmount(new_order.base, new_order.price));
       order_id += 1;
     };
     user := Book.saveSubaccount(user, sub, subacc);
@@ -788,23 +780,17 @@ shared (install) persistent actor class Canister(
         orders := RBTree.insert(orders, Nat.compare, oid, o.data);
         if (o.data.is_buy) {
           var pr = Book.getLevel(buy_book, o.data.price);
-          pr := Book.levelDecAmount(pr, o.data.base);
           pr := Book.levelDelOrder(pr, oid);
           buy_book := Book.saveLevel(buy_book, o.data.price, pr);
 
           let o_quote = Book.mulAmount(o.data.base, o.data.price);
-          quote := Book.decAmount(quote, o_quote);
           subacc := Book.subaccDelBuyLevel(subacc, o.data);
-          subacc := Book.subaccDecQuote(subacc, o_quote);
         } else {
           var pr = Book.getLevel(sell_book, o.data.price);
-          pr := Book.levelDecAmount(pr, o.data.base);
           pr := Book.levelDelOrder(pr, oid);
           sell_book := Book.saveLevel(sell_book, o.data.price, pr);
 
-          base := Book.decAmount(base, o.data.base);
           subacc := Book.subaccDelSellLevel(subacc, o.data);
-          subacc := Book.subaccDecBase(subacc, o.data.base);
         };
         orders_by_expiry := Book.delExpiry(orders_by_expiry, o.data.expires_at, oid);
         orders_by_expiry := Book.newExpiry(orders_by_expiry, o.data.expires_at + env.ttl, oid);
@@ -814,23 +800,16 @@ shared (install) persistent actor class Canister(
     };
     if (RBTree.size(refundables) == 0) return #Err(#Closed { index = 0; at = env.now });
 
-    base := Book.lockAmount(base, lbase);
-    quote := Book.lockAmount(quote, lquote);
-
     for ((oid, o) in RBTree.entries(refundables)) {
       orders := RBTree.insert(orders, Nat.compare, oid, o.data);
       if (o.data.is_buy) {
         var price = Book.getLevel(buy_book, o.data.price);
-        price := Book.levelLock(price, o.data.base.locked);
         buy_book := Book.saveLevel(buy_book, o.data.price, price);
       } else {
         var price = Book.getLevel(sell_book, o.data.price);
-        price := Book.levelLock(price, o.data.base.locked);
         sell_book := Book.saveLevel(sell_book, o.data.price, price);
       };
     };
-    subacc := Book.subaccLockQuote(subacc, lquote);
-    subacc := Book.subaccLockBase(subacc, lbase);
     user := Book.saveSubaccount(user, sub, subacc);
     user := saveUser(caller, user);
 
@@ -840,17 +819,11 @@ shared (install) persistent actor class Canister(
       for ((oid, o) in RBTree.entries(refundables)) {
         if (o.data.is_buy) {
           var pr = Book.getLevel(buy_book, o.data.price);
-          pr := Book.levelUnlock(pr, o.data.base.locked);
           buy_book := Book.saveLevel(buy_book, o.data.price, pr);
           var o_quote = o.data.base.locked * o.data.price;
-          quote := Book.unlockAmount(quote, o_quote);
-          subacc := Book.subaccUnlockQuote(subacc, o_quote);
         } else {
           var pr = Book.getLevel(sell_book, o.data.price);
-          pr := Book.levelUnlock(pr, o.data.base.locked);
           sell_book := Book.saveLevel(sell_book, o.data.price, pr);
-          base := Book.unlockAmount(base, o.data.base.locked);
-          subacc := Book.subaccUnlockBase(subacc, o.data.base.locked);
         };
         var order = Book.unlockOrder(o.data, o.data.base.locked);
         order := { order with closed = null };
@@ -878,21 +851,15 @@ shared (install) persistent actor class Canister(
       if (o.data.is_buy) {
         var pr = Book.getLevel(buy_book, o.data.price);
         pr := Book.levelDelOrder(pr, oid);
-        pr := Book.levelDecAmount(pr, o.data.base);
         buy_book := Book.saveLevel(buy_book, o.data.price, pr);
         let o_quote = Book.mulAmount(o.data.base, o.data.price);
-        quote := Book.decAmount(quote, o_quote);
-        subacc := Book.subaccDecQuote(subacc, o_quote);
         subacc := Book.subaccDelBuyLevel(subacc, o.data);
         let fee = if (o.reason == #Canceled null) fee_quote else 0;
         ovalues.add(Book.valueClose(oid, "quote", o_quote.locked, fee, execute));
       } else {
         var pr = Book.getLevel(sell_book, o.data.price);
         pr := Book.levelDelOrder(pr, oid);
-        pr := Book.levelDecAmount(pr, o.data.base);
         sell_book := Book.saveLevel(sell_book, o.data.price, pr);
-        base := Book.decAmount(base, o.data.base);
-        subacc := Book.subaccDecBase(subacc, o.data.base);
         subacc := Book.subaccDelSellLevel(subacc, o.data);
         let fee = if (o.reason == #Canceled null) fee_base else 0;
         ovalues.add(Book.valueClose(oid, "base", o.data.base.locked, fee, execute));
@@ -980,8 +947,6 @@ shared (install) persistent actor class Canister(
       case _ {
         users := RBTree.empty(); // rebuild everything using orders
         orders_by_expiry := RBTree.empty();
-        base := Book.newAmount(0);
-        quote := Book.newAmount(0);
         sell_book := RBTree.empty();
         buy_book := RBTree.empty();
         build();
@@ -1018,22 +983,16 @@ shared (install) persistent actor class Canister(
         if (o.is_buy) {
           var pr = Book.getLevel(buy_book, o.price);
           pr := Book.levelNewOrder(pr, oid);
-          pr := Book.levelIncAmount(pr, o.base);
           buy_book := Book.saveLevel(buy_book, o.price, pr);
           subacc := Book.subaccNewBuy(subacc, oid);
           subacc := Book.subaccNewBuyLevel(subacc, oid, o);
           let o_quote = Book.mulAmount(o.base, o.price);
-          subacc := Book.subaccIncQuote(subacc, o_quote);
-          quote := Book.incAmount(quote, o_quote);
         } else {
           var pr = Book.getLevel(sell_book, o.price);
           pr := Book.levelNewOrder(pr, oid);
-          pr := Book.levelIncAmount(pr, o.base);
           sell_book := Book.saveLevel(sell_book, o.price, pr);
           subacc := Book.subaccNewSell(subacc, oid);
           subacc := Book.subaccNewSellLevel(subacc, oid, o);
-          subacc := Book.subaccIncBase(subacc, o.base);
-          base := Book.incAmount(base, o.base);
         };
       };
       user := Book.saveSubaccount(user, o.sub, subacc);
@@ -1097,22 +1056,16 @@ shared (install) persistent actor class Canister(
             var subacc = Book.getSubaccount(user, o.sub);
             if (o.is_buy) {
               var lvl = Book.getLevel(buy_book, o.price);
-              lvl := Book.levelDecAmount(lvl, o.base);
               lvl := Book.levelDelOrder(lvl, id);
               buy_book := Book.saveLevel(buy_book, o.price, lvl);
 
               let o_quote = Book.mulAmount(o.base, o.price);
-              quote := Book.decAmount(base, o_quote);
-              subacc := Book.subaccDecQuote(subacc, o_quote);
               subacc := Book.subaccDelBuyLevel(subacc, o);
             } else {
               var lvl = Book.getLevel(sell_book, o.price);
-              lvl := Book.levelDecAmount(lvl, o.base);
               lvl := Book.levelDelOrder(lvl, id);
               sell_book := Book.saveLevel(sell_book, o.price, lvl);
 
-              base := Book.decAmount(base, o.base);
-              subacc := Book.subaccDecBase(subacc, o.base);
               subacc := Book.subaccDelSellLevel(subacc, o);
             };
             user := Book.saveSubaccount(user, o.sub, subacc);
@@ -1369,7 +1322,7 @@ shared (install) persistent actor class Canister(
       var sell_o = Book.defaultOrder(Principal.fromActor(Self), Subaccount.get(null), false, env.now);
       var buy_o = { sell_o with is_buy = true };
       label timing while (round <= max_round) {
-        if (start_sell_o) switch (RBTree.minKey(sell_lvl.orders)) {
+        if (start_sell_o) switch (RBTree.minKey(sell_lvl)) {
           case (?id) {
             sell_id := id;
             sell_o := switch (RBTree.get(orders, Nat.compare, sell_id)) {
@@ -1387,7 +1340,7 @@ shared (install) persistent actor class Canister(
             sell_book := RBTree.delete(sell_book, Nat.compare, sell_p);
             continue pricing;
           };
-        } else if (next_sell_o) switch (RBTree.right(sell_lvl.orders, Nat.compare, sell_id + 1)) {
+        } else if (next_sell_o) switch (RBTree.right(sell_lvl, Nat.compare, sell_id + 1)) {
           case (?(id, _)) {
             sell_id := id;
             sell_o := switch (RBTree.get(orders, Nat.compare, sell_id)) {
@@ -1406,7 +1359,7 @@ shared (install) persistent actor class Canister(
           };
         };
 
-        if (start_buy_o) switch (RBTree.minKey(buy_lvl.orders)) {
+        if (start_buy_o) switch (RBTree.minKey(buy_lvl)) {
           case (?id) {
             buy_id := id;
             buy_o := switch (RBTree.get(orders, Nat.compare, buy_id)) {
@@ -1424,7 +1377,7 @@ shared (install) persistent actor class Canister(
             buy_book := RBTree.delete(buy_book, Nat.compare, buy_p);
             continue pricing;
           };
-        } else if (next_buy_o) switch (RBTree.right(buy_lvl.orders, Nat.compare, buy_id + 1)) {
+        } else if (next_buy_o) switch (RBTree.right(buy_lvl, Nat.compare, buy_id + 1)) {
           case (?(id, _)) {
             buy_id := id;
             buy_o := switch (RBTree.get(orders, Nat.compare, buy_id)) {
@@ -1454,14 +1407,11 @@ shared (install) persistent actor class Canister(
         switch (sell_o.closed) {
           case (?cl) {
             if (not Book.isClosing(cl.reason)) {
-              sell_lvl := Book.levelDecAmount(sell_lvl, sell_o.base);
               sell_lvl := Book.levelDelOrder(sell_lvl, sell_id);
               sell_book := Book.saveLevel(sell_book, sell_p, sell_lvl);
 
-              base := Book.decAmount(base, sell_o.base);
               var user = getUser(sell_o.owner);
               var subacc = Book.getSubaccount(user, sell_o.sub);
-              subacc := Book.subaccDecBase(subacc, sell_o.base);
               subacc := Book.subaccDelSellLevel(subacc, sell_o);
               user := Book.saveSubaccount(user, sell_o.sub, subacc);
               user := saveUser(sell_o.owner, user);
@@ -1474,16 +1424,13 @@ shared (install) persistent actor class Canister(
         switch (buy_o.closed) {
           case (?cl) {
             if (not Book.isClosing(cl.reason)) {
-              buy_lvl := Book.levelDecAmount(buy_lvl, buy_o.base);
               buy_lvl := Book.levelDelOrder(buy_lvl, buy_id);
               buy_book := Book.saveLevel(buy_book, buy_p, buy_lvl);
 
               let o_quote = Book.mulAmount(buy_o.base, buy_p);
-              quote := Book.decAmount(quote, o_quote);
 
               var user = getUser(buy_o.owner);
               var subacc = Book.getSubaccount(user, buy_o.sub);
-              subacc := Book.subaccDecQuote(subacc, o_quote);
               subacc := Book.subaccDelBuyLevel(subacc, buy_o);
               user := Book.saveSubaccount(user, buy_o.sub, subacc);
               user := saveUser(buy_o.owner, user);
@@ -1506,15 +1453,11 @@ shared (install) persistent actor class Canister(
           sell_o := { sell_o with closed };
           orders := RBTree.insert(orders, Nat.compare, sell_id, sell_o);
 
-          sell_lvl := Book.levelDecAmount(sell_lvl, sell_o.base);
           sell_lvl := Book.levelDelOrder(sell_lvl, sell_id);
           sell_book := Book.saveLevel(sell_book, sell_p, sell_lvl);
 
-          base := Book.decAmount(base, sell_o.base);
-
           var user = getUser(sell_o.owner);
           var subacc = Book.getSubaccount(user, sell_o.sub);
-          subacc := Book.subaccDecBase(subacc, sell_o.base);
           subacc := Book.subaccDelSellLevel(subacc, sell_o);
           user := Book.saveSubaccount(user, sell_o.sub, subacc);
           user := saveUser(sell_o.owner, user);
@@ -1530,16 +1473,13 @@ shared (install) persistent actor class Canister(
           buy_o := { buy_o with closed };
           orders := RBTree.insert(orders, Nat.compare, buy_id, buy_o);
 
-          buy_lvl := Book.levelDecAmount(buy_lvl, buy_o.base);
           buy_lvl := Book.levelDelOrder(buy_lvl, buy_id);
           buy_book := Book.saveLevel(buy_book, buy_p, buy_lvl);
 
           let o_quote = Book.mulAmount(buy_o.base, buy_p);
-          quote := Book.decAmount(quote, o_quote);
 
           var user = getUser(buy_o.owner);
           var subacc = Book.getSubaccount(user, buy_o.sub);
-          subacc := Book.subaccDecQuote(subacc, o_quote);
           subacc := Book.subaccDelBuyLevel(subacc, buy_o);
           user := Book.saveSubaccount(user, buy_o.sub, subacc);
           user := saveUser(buy_o.owner, user);
@@ -1575,14 +1515,8 @@ shared (install) persistent actor class Canister(
         var buy_u = getUser(buy_o.owner);
         var sell_sub = Book.getSubaccount(sell_u, sell_o.sub);
         var buy_sub = Book.getSubaccount(buy_u, buy_o.sub);
-        sell_sub := Book.subaccLockBase(sell_sub, min_base);
-        buy_sub := Book.subaccLockQuote(buy_sub, min_quote);
         sell_o := Book.lockOrder(sell_o, min_base);
         buy_o := Book.lockOrder(buy_o, min_base);
-        sell_lvl := Book.levelLock(sell_lvl, min_base);
-        buy_lvl := Book.levelLock(buy_lvl, min_base);
-        base := Book.lockAmount(base, min_base);
-        quote := Book.lockAmount(quote, min_quote);
 
         func saveMatch() {
           orders := RBTree.insert(orders, Nat.compare, sell_id, sell_o);
@@ -1638,18 +1572,12 @@ shared (install) persistent actor class Canister(
         func unlockMatch() {
           sell_o := Book.unlockOrder(sell_o, amt);
           buy_o := Book.unlockOrder(buy_o, amt);
-          base := Book.unlockAmount(base, amt);
-          quote := Book.unlockAmount(quote, amt_q);
           sell_lvl := Book.getLevel(sell_book, sell_p);
-          sell_lvl := Book.levelUnlock(sell_lvl, amt);
           buy_lvl := Book.getLevel(buy_book, buy_p);
-          buy_lvl := Book.levelUnlock(buy_lvl, amt);
           sell_u := getUser(sell_o.owner);
           sell_sub := Book.getSubaccount(sell_u, sell_o.sub);
-          sell_sub := Book.subaccUnlockBase(sell_sub, amt);
           buy_u := getUser(buy_o.owner);
           buy_sub := Book.getSubaccount(buy_u, buy_o.sub);
-          buy_sub := Book.subaccUnlockQuote(buy_sub, amt_q);
         };
         let exec_ids = switch (await env.vault.vault_execute(instruction_blocks)) {
           case (#Err err) {
@@ -1660,14 +1588,6 @@ shared (install) persistent actor class Canister(
           case (#Ok ok) ok;
         };
         unlockMatch();
-
-        let i_quote = amt * buy_o.price; // dont use maker price for accurate representation
-        base := Book.fillAmount(base, amt);
-        quote := Book.fillAmount(quote, i_quote);
-        sell_lvl := Book.levelFill(sell_lvl, amt);
-        buy_lvl := Book.levelFill(buy_lvl, amt);
-        sell_sub := Book.subaccFillBase(sell_sub, amt);
-        buy_sub := Book.subaccFillQuote(buy_sub, i_quote);
         saveMatch();
 
         let maker_reward = Nat.max(amt_q / env.min_quote_amount, 1);
@@ -1714,7 +1634,7 @@ shared (install) persistent actor class Canister(
     reward_id += 1;
   };
 
-  func refundClose(caller : Principal, sub : Blob, env : B.Environment, reason : { #Expired : Null; #AlmostFilled : Null }, oid : Nat, _o : B.Order, unfilled : Nat, _lvl : B.Price, unfilled_q : Nat) : async* B.RunRes {
+  func refundClose(caller : Principal, sub : Blob, env : B.Environment, reason : { #Expired : Null; #AlmostFilled : Null }, oid : Nat, _o : B.Order, unfilled : Nat, _lvl : B.Nats, unfilled_q : Nat) : async* B.RunRes {
     var o = _o;
     o := { o with closed = ?{ reason; at = env.now } };
     o := Book.lockOrder(o, unfilled);
@@ -1722,18 +1642,14 @@ shared (install) persistent actor class Canister(
 
     let account = { owner = o.owner; subaccount = Subaccount.opt(o.sub) };
     let unlock = { account; action = #Unlock };
-    var lvl = Book.levelLock(_lvl, unfilled);
+    var lvl = _lvl;
     var user = getUser(o.owner);
     var subacc = Book.getSubaccount(user, o.sub);
     let (instruction) = if (o.is_buy) {
       buy_book := Book.saveLevel(buy_book, o.price, lvl);
-      subacc := Book.subaccLockQuote(subacc, unfilled_q);
-      quote := Book.lockAmount(quote, unfilled_q);
       { unlock with token = env.quote_token_id; amount = unfilled_q };
     } else {
       sell_book := Book.saveLevel(sell_book, o.price, lvl);
-      subacc := Book.subaccLockBase(subacc, unfilled);
-      base := Book.lockAmount(base, unfilled);
       { unlock with token = env.base_token_id; amount = unfilled };
     };
     user := Book.saveSubaccount(user, o.sub, subacc);
@@ -1744,16 +1660,10 @@ shared (install) persistent actor class Canister(
       subacc := Book.getSubaccount(user, sub);
       if (o.is_buy) {
         lvl := Book.getLevel(buy_book, o.price);
-        lvl := Book.levelUnlock(lvl, unfilled);
         buy_book := Book.saveLevel(buy_book, o.price, lvl);
-        quote := Book.unlockAmount(quote, unfilled_q);
-        subacc := Book.subaccUnlockQuote(subacc, unfilled_q);
       } else {
         lvl := Book.getLevel(sell_book, o.price);
-        lvl := Book.levelUnlock(lvl, unfilled);
         sell_book := Book.saveLevel(sell_book, o.price, lvl);
-        base := Book.unlockAmount(base, unfilled);
-        subacc := Book.subaccUnlockBase(subacc, unfilled);
       };
       o := Book.unlockOrder(o, unfilled);
       o := { o with closed = null };
@@ -1774,20 +1684,14 @@ shared (install) persistent actor class Canister(
     let val = if (o.is_buy) {
       lvl := Book.getLevel(buy_book, o.price);
       lvl := Book.levelDelOrder(lvl, oid);
-      lvl := Book.levelDecAmount(lvl, o.base);
       buy_book := Book.saveLevel(buy_book, o.price, lvl);
       let o_quote = Book.mulAmount(o.base, o.price);
-      quote := Book.decAmount(quote, o_quote);
-      subacc := Book.subaccDecQuote(subacc, o_quote);
       subacc := Book.subaccDelBuyLevel(subacc, o);
-      [Book.valueClose(oid, "quote", quote.locked, 0, execute)];
+      [Book.valueClose(oid, "quote", o_quote.locked, 0, execute)];
     } else {
       lvl := Book.getLevel(sell_book, o.price);
       lvl := Book.levelDelOrder(lvl, oid);
-      lvl := Book.levelDecAmount(lvl, o.base);
       sell_book := Book.saveLevel(sell_book, o.price, lvl);
-      base := Book.decAmount(base, o.base);
-      subacc := Book.subaccDecBase(subacc, o.base);
       subacc := Book.subaccDelSellLevel(subacc, o);
       [Book.valueClose(oid, "base", o.base.locked, 0, execute)];
     };

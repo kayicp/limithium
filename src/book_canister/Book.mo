@@ -28,10 +28,8 @@ module {
     case _ ({
       sells = RBTree.empty();
       sell_lvls = RBTree.empty();
-      base = newAmount(0);
       buys = RBTree.empty();
       buy_lvls = RBTree.empty();
-      quote = newAmount(0);
     });
   };
   public func saveSubaccount(u : B.User, subacc_id : Blob, subacc : B.Subaccount) : B.User = RBTree.insert(u, Blob.compare, subacc_id, subacc);
@@ -134,35 +132,15 @@ module {
     case (#AlmostFilled null or #Expired null or #Canceled null) true;
     case _ false;
   };
-  public func getLevel(book : B.Book, price : Nat) : B.Price = switch (RBTree.get(book, Nat.compare, price)) {
+  public func getLevel(book : B.Book, price : Nat) : B.Nats = switch (RBTree.get(book, Nat.compare, price)) {
     case (?found) found;
-    case _ ({
-      base = newAmount(0);
-      orders = RBTree.empty();
-    });
+    case _ RBTree.empty();
   };
-  public func levelNewOrder(p : B.Price, oid : Nat) : B.Price = {
-    p with orders = RBTree.insert(p.orders, Nat.compare, oid, ());
-  };
-  public func levelIncAmount(p : B.Price, o : B.Amount) : B.Price = {
-    p with base = incAmount(p.base, o);
-  };
-  public func levelDelOrder(p : B.Price, oid : Nat) : B.Price = {
-    p with orders = RBTree.delete(p.orders, Nat.compare, oid);
-  };
-  public func levelDecAmount(p : B.Price, o : B.Amount) : B.Price = {
-    p with base = decAmount(p.base, o);
-  };
-  public func levelLock(p : B.Price, l : Nat) : B.Price = ({
-    p with base = lockAmount(p.base, l)
-  });
-  public func levelUnlock(p : B.Price, l : Nat) : B.Price = ({
-    p with base = unlockAmount(p.base, l)
-  });
-  public func levelFill(p : B.Price, l : Nat) : B.Price = ({
-    p with base = fillAmount(p.base, l);
-  });
-  public func saveLevel(b : B.Book, price : Nat, p : B.Price) : B.Book = if (RBTree.size(p.orders) > 0) {
+  public func levelNewOrder(p : B.Nats, oid : Nat) : B.Nats = RBTree.insert(p, Nat.compare, oid, ());
+
+  public func levelDelOrder(p : B.Nats, oid : Nat) : B.Nats = RBTree.delete(p, Nat.compare, oid);
+
+  public func saveLevel(b : B.Book, price : Nat, p : B.Nats) : B.Book = if (RBTree.size(p) > 0) {
     RBTree.insert(b, Nat.compare, price, p);
   } else RBTree.delete(b, Nat.compare, price);
 
@@ -190,36 +168,6 @@ module {
   public func subaccDelBuyLevel(s : B.Subaccount, { price : Nat }) : B.Subaccount = ({
     s with buy_lvls = RBTree.delete(s.buy_lvls, Nat.compare, price);
   });
-  public func subaccIncQuote(s : B.Subaccount, q : B.Amount) : B.Subaccount = {
-    s with quote = incAmount(s.quote, q);
-  };
-  public func subaccIncBase(s : B.Subaccount, b : B.Amount) : B.Subaccount = {
-    s with base = incAmount(s.base, b);
-  };
-  public func subaccDecQuote(s : B.Subaccount, q : B.Amount) : B.Subaccount = {
-    s with quote = decAmount(s.quote, q);
-  };
-  public func subaccDecBase(s : B.Subaccount, b : B.Amount) : B.Subaccount = {
-    s with base = decAmount(s.base, b);
-  };
-  public func subaccLockQuote(s : B.Subaccount, n : Nat) : B.Subaccount = {
-    s with quote = lockAmount(s.quote, n)
-  };
-  public func subaccLockBase(s : B.Subaccount, n : Nat) : B.Subaccount = {
-    s with base = lockAmount(s.base, n);
-  };
-  public func subaccUnlockQuote(s : B.Subaccount, n : Nat) : B.Subaccount = {
-    s with quote = unlockAmount(s.quote, n)
-  };
-  public func subaccUnlockBase(s : B.Subaccount, n : Nat) : B.Subaccount = {
-    s with base = unlockAmount(s.base, n);
-  };
-  public func subaccFillQuote(s : B.Subaccount, n : Nat) : B.Subaccount = {
-    s with quote = fillAmount(s.quote, n)
-  };
-  public func subaccFillBase(s : B.Subaccount, n : Nat) : B.Subaccount = {
-    s with base = fillAmount(s.base, n);
-  };
   public func fillOrder(o : B.Order, amount : Nat, trade_id : Nat) : B.Order = {
     o with base = fillAmount(o.base, amount);
     trades = RBTree.insert(o.trades, Nat.compare, trade_id, ());

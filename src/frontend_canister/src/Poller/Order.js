@@ -1,10 +1,10 @@
-import Base from '../Types/Base';
+import Amount from '../Types/Amount';
 
 class Order {
-	id = 0;
+	id = 0n;
 	book_anon = null;
 
-	base = new Base();
+	base = new Amount();
 	is_buy = null;
 	owner = null;
 	block = null;

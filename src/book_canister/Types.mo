@@ -37,14 +37,13 @@ module {
   public let MAX_QUERY_BATCH = "vault:max_query_batch_size";
 
   public type Nats = RBTree.Type<Nat, ()>;
-  public type Expiries = RBTree.Type<Nat64, Nats>;
+  public type Expiries = RBTree.Type<Nat64, (orders : Nats)>;
   public type Amount = {
     initial : Nat;
     locked : Nat;
     filled : Nat;
   };
-  public type Price = { base : Amount; orders : Nats };
-  public type Book = RBTree.Type<(price : Nat), Price>;
+  public type Book = RBTree.Type<(price : Nat), (orders : Nats)>;
   public type SellHand = {
     id : Nat;
     base : Nat;
@@ -93,8 +92,6 @@ module {
     sells : Nats;
     sell_lvls : RBTree.Type<(price : Nat), (order : Nat)>; // price-sort, cant place order on same price, remove once closed so can be placed again on the same price
     buy_lvls : RBTree.Type<(price : Nat), (order : Nat)>;
-    base : Amount;
-    quote : Amount;
   };
   public type User = RBTree.Type<Blob, Subaccount>;
   public type Users = RBTree.Type<Principal, User>;

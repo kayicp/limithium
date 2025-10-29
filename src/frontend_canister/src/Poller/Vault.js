@@ -1,6 +1,9 @@
-import { createActor, canisterId } from 'declarations/vault_canister';
+import { idlFactory, canisterId } from 'declarations/vault_canister';
 import Token from './Token';
 import Book from './Book';
+import { HttpAgent } from '@dfinity/agent';
+import { wait } from '../../../util/js/wait';
+import { genActor } from '../../../util/js/actor';
 
 class Vault {
   wallet = null;
@@ -11,12 +14,12 @@ class Vault {
 
   constructor(wallet) {
     this.wallet = wallet;
-    this.anon = createActor(canisterId);
     this.#init();
   }
 
   async #init() {
     try {
+      this.anon = await genActor(idlFactory, canisterId);
       const result = await this.anon.vault_executors([], []);
       
       for (const p of result) {
@@ -60,10 +63,10 @@ class Vault {
 
     setInterval(async () => {
       // Get unlocked balances
-      const p = this.wallet.get().principal;
-      if (p == null) return;
+      const user_p = this.wallet.get().principal;
+      if (user_p == null) return;
       try {
-        const account = { owner: p, subaccount: [] };
+        const account = { owner: user_p, subaccount: [] };
         const accounts = t_ids.map(token => ({ token, account }));
 
         const bals = await this.anon.vault_unlocked_balances_of(accounts);

@@ -1,11 +1,11 @@
 import Order from './Order';
-import Base from '../Types/Base';
+import Amount from '../Types/Amount';
 
 class Price {
 	level = 0;
 
 	oids = new Set();
-	base = new Base();
+	base = new Amount();
 
 	constructor(book_anon, is_buy, orders, new_oids, trades, new_tids) {
 		const orders_at = is_buy? book_anon.book_bids_at : book_anon.book_asks_at;
@@ -14,7 +14,7 @@ class Price {
 			if (this.level == 0) return;
 			let prev = [];
 			const _oids = new Set();
-			const _base = new Base();
+			const _base = new Amount();
 			try {
 				getting: while (true) {
 					const oids = await orders_at(this.level, prev, []);
@@ -43,7 +43,7 @@ class Price {
 	changeLevel(lvl = 0n) {
 		this.level = lvl;
 		this.oids = new Set();
-		this.base = new Base();
+		this.base = new Amount();
 	}
 }
 

@@ -1,6 +1,8 @@
-import { createActor } from 'declarations/ckbtc_icp_book';
+import { idlFactory } from 'declarations/ckbtc_icp_book';
 import Price from './Price';
 import Order from './Order';
+import { wait } from '../../../util/js/wait';
+import { genActor } from '../../../util/js/actor';
 
 class Book {
   wallet = null;
@@ -21,17 +23,16 @@ class Book {
   recents = [];
   new_tids = [];
   
-  constructor(p, wallet) {
-    this.wallet = wallet;
-    this.anon = createActor(p);
-    
-    this.asks = Array.from({ length : 6 }, () => new Price(p, false, this.orders, this.new_oids, this.trades, this.new_tids));
-    this.bids = Array.from({ length : 6 }, () => new Price(p, true, this.orders, this.new_oids, this.trades, this.new_tids));
+  constructor(book_id, wallet) {
+    this.wallet = wallet;    
+    this.asks = Array.from({ length : 6 }, () => new Price(book_id, false, this.orders, this.new_oids, this.trades, this.new_tids));
+    this.bids = Array.from({ length : 6 }, () => new Price(book_id, true, this.orders, this.new_oids, this.trades, this.new_tids));
     this.recents = Array.from({ length : 12 }, () => null);
 
     // todo: dont use setinterval, but use wait after job done
     setInterval(async () => {
       try {
+        if (!this.anon) this.anon = await genActor(idlFactory, book_id);
         const [ask_prices, bid_prices] = await Promise.all([
           this.anon.book_ask_prices([], [this.asks.length]),
           this.anon.book_bid_prices([], [this.bids.length])
@@ -46,14 +47,14 @@ class Book {
         console.error('prices:', cause);
       }
 
-      const p = wallet.get().principal;
-      const account = { owner : p, subaccount: [] };
+      const user_p = wallet.get().principal;
+      const account = { owner : user_p, subaccount: [] };
 
       try {
         const user_buy_lvls = new Map(); 
-        while (p != null) {
+        while (user_p != null) {
           let prev = [];
-          const buy_lvls = await this.anon.book_buy_prices_by(prev, []);
+          const buy_lvls = await this.anon.book_buy_prices_by(account, prev, []);
           if (buy_lvls.length == 0) break;
           for (const [lvl, oid] of buy_lvls) {
             user_buy_lvls.set(lvl, oid);
@@ -71,9 +72,9 @@ class Book {
 
       try {
         const user_sell_lvls = new Map(); 
-        while (p != null) {
+        while (user_p != null) {
           let prev = [];
-          const sell_lvls = await this.anon.book_sell_prices_by(prev, []);
+          const sell_lvls = await this.anon.book_sell_prices_by(account, prev, []);
           if (sell_lvls.length == 0) break;
           for (const [lvl, oid] of sell_lvls) {
             user_sell_lvls.set(lvl, oid);
@@ -90,7 +91,7 @@ class Book {
       }
 
       try { // todo: this should be on a separate job
-        while (p != null) {
+        while (user_p != null) {
           const prev = this.user_buys.length > 0? [this.user_buys[this.user_buys.length - 1]] : [];
           const buys = await this.anon.book_buy_orders_by(account, prev, []);
           if (buys.length == 0) break;
@@ -108,7 +109,7 @@ class Book {
       }
 
       try { // todo: this should be on a separate job
-        while (p != null) {
+        while (user_p != null) {
           const prev = this.user_sells.length > 0? [this.user_sells[this.user_sells.length - 1]] : [];
           const sells = await this.anon.book_sell_orders_by(account, prev, []);
           if (sells.length == 0) break;

@@ -9,7 +9,7 @@ class Wallet {
   }
 
   get() {
-    this.ii;
+    return this.ii;
   }
 }
 
