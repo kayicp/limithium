@@ -257,6 +257,8 @@ class Book {
       }
     }, 1000);
   }
+
+  // async #init
 }
 
 export default Book;

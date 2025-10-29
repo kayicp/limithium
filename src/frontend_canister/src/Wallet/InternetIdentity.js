@@ -1,7 +1,8 @@
 import { AuthClient } from "@dfinity/auth-client";
 import { HttpAgent } from '@dfinity/agent';
-import { Principal } from '@dfinity/principal';
+import Principal from '../../../util/js/principal';
 import { AccountIdentifier } from '@dfinity/ledger-icp'
+import Constant from "./Constants";
 
 const network = process.env.DFX_NETWORK;
 const identityProvider =
@@ -16,51 +17,66 @@ class InternetIdentity {
 	agent = null;
 	principal = null;
 	accountid = null;
+	pubsub = null;
 
-  constructor() {
+  constructor(pubsub) {
+		this.pubsub = pubsub;
 		this.#init();
   }
 
   async #init() {
+		this.pubsub.emit(Constant.LOGIN_BUSY);
     if (this.ii == null) try {
       this.ii = await AuthClient.create();
     } catch (err) {
-      return console.error('II init create', err);
+			return this.pubsub.emit(Constant.CLIENT_ERR, err);
     }
     try {
       if (await this.ii.isAuthenticated()) {
-				await this.#authed();
-			} else console.log('II init no auth');
+				// proceed to #authed
+			} else return this.pubsub.emit(Constant.ANON_OK);
     } catch (err) {
-			console.error('II try init err', err);
+			return this.pubsub.emit(Constant.IS_AUTH_ERR, err);
     }
+		try {
+			await this.#authed();
+			this.pubsub.emit(Constant.LOGIN_OK);
+		} catch (err) {
+			this.pubsub.emit(Constant.LOGIN_ERR, err);
+		}
   }
 
 	async login() {
+		this.pubsub.emit(Constant.LOGIN_BUSY);
 		return new Promise(async (resolve, reject) => {
 			if (this.ii == null) try {
 				this.ii = await AuthClient.create();
-			} catch (e) {
-				reject(e);
+			} catch (err) {
+				this.pubsub.emit(Constant.CLIENT_ERR, err);
+				return reject(err);
+			}
+			const self = this;
+			async function onSuccess() {
+				try {
+					await self.#authed();
+					self.pubsub.emit(Constant.LOGIN_OK);
+					resolve();
+				} catch (err) {
+					self.emit(Constant.LOGIN_ERR, err);
+					reject(err);
+				}
 			}
 			try {
 				if (await this.ii.isAuthenticated()) {
-					await this.#authed();
-					resolve();
+					onSuccess();
 				} else this.ii.login({
 					maxTimeToLive: DAYS_30_NANOS,
 					identityProvider,
-					onSuccess: async () => {
-						try {
-							await this.#authed();
-							resolve();
-						} catch (e) {
-							reject(e)
-						}
-					},
+					onSuccess,
 				});
-			} catch (e) {
-				reject(e);
+			} catch (err) {
+				this.pubsub.emit(Constant.IS_AUTH_ERR, err);
+				reject(err);
 			}
 		});
 	}
@@ -73,13 +89,14 @@ class InternetIdentity {
 				this.principal = await identity.getPrincipal();
 				this.accountid = AccountIdentifier.fromPrincipal({ principal: this.principal }).toHex();
 				resolve();
-			} catch (e) {
-				reject(e);
+			} catch (err) {
+				reject(err);
 			}
 		});
 	}
 
 	async logout() {
+		this.pubsub.emit(Constant.LOGOUT_BUSY);
 		return new Promise(async (resolve, reject) => {
 			try {
 				await this.ii.logout();
@@ -87,9 +104,11 @@ class InternetIdentity {
 				this.agent = null;
 				this.principal = null;
 				this.accountid = null;
+				this.pubsub.emit(Constant.LOGOUT_OK);
 				resolve();
-			} catch (e) {
-				reject(e);
+			} catch (err) {
+				this.pubsub.emit(Constant.LOGOUT_ERR, err);
+				reject(err);
 			}
 		});
 	}

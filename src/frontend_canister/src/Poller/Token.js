@@ -49,7 +49,7 @@ class Token {
 
       try {
         const [balance, approval] = await Promise.all([
-          this.anon.icrc1_balance(account),        
+          this.anon.icrc1_balance_of(account),        
           this.anon.icrc2_allowance({ account, spender }),
         ]);
         this.balance = balance;

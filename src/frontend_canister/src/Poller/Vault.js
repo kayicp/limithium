@@ -4,6 +4,7 @@ import Book from './Book';
 import { HttpAgent } from '@dfinity/agent';
 import { wait } from '../../../util/js/wait';
 import { genActor } from '../../../util/js/actor';
+import Principal from '../../../util/js/principal';
 
 class Vault {
   wallet = null;
@@ -36,7 +37,7 @@ class Vault {
         this.tokens.set(p, {
           withdrawal_fee: 0,
           balance: 0,
-          actor: new Token(p, canisterId, this.wallet)
+          actor: new Token(p, Principal.fromText(canisterId), this.wallet)
         });
       }      
     } catch (cause) {
