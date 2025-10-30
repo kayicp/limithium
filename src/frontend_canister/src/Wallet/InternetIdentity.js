@@ -25,44 +25,44 @@ class InternetIdentity {
   }
 
   async #init() {
-		this.pubsub.emit(Constant.LOGIN_BUSY);
+		this.pubsub.emit(Constant.EVENT.LOGIN_BUSY);
     if (this.ii == null) try {
       this.ii = await AuthClient.create();
     } catch (err) {
-			return this.pubsub.emit(Constant.CLIENT_ERR, err);
+			return this.pubsub.emit(Constant.EVENT.CLIENT_ERR, { err });
     }
     try {
       if (await this.ii.isAuthenticated()) {
 				// proceed to #authed
-			} else return this.pubsub.emit(Constant.ANON_OK);
+			} else return this.pubsub.emit(Constant.EVENT.ANON_OK);
     } catch (err) {
-			return this.pubsub.emit(Constant.IS_AUTH_ERR, err);
+			return this.pubsub.emit(Constant.EVENT.IS_AUTH_ERR, { err });
     }
 		try {
 			await this.#authed();
-			this.pubsub.emit(Constant.LOGIN_OK);
+			this.pubsub.emit(Constant.EVENT.LOGIN_OK);
 		} catch (err) {
-			this.pubsub.emit(Constant.LOGIN_ERR, err);
+			this.pubsub.emit(Constant.EVENT.LOGIN_ERR, { err });
 		}
   }
 
 	async login() {
-		this.pubsub.emit(Constant.LOGIN_BUSY);
+		this.pubsub.emit(Constant.EVENT.LOGIN_BUSY);
 		return new Promise(async (resolve, reject) => {
 			if (this.ii == null) try {
 				this.ii = await AuthClient.create();
 			} catch (err) {
-				this.pubsub.emit(Constant.CLIENT_ERR, err);
+				this.pubsub.emit(Constant.EVENT.CLIENT_ERR, { err });
 				return reject(err);
 			}
 			const self = this;
 			async function onSuccess() {
 				try {
 					await self.#authed();
-					self.pubsub.emit(Constant.LOGIN_OK);
+					self.pubsub.emit(Constant.EVENT.LOGIN_OK);
 					resolve();
 				} catch (err) {
-					self.emit(Constant.LOGIN_ERR, err);
+					self.emit(Constant.EVENT.LOGIN_ERR, { err });
 					reject(err);
 				}
 			}
@@ -75,7 +75,7 @@ class InternetIdentity {
 					onSuccess,
 				});
 			} catch (err) {
-				this.pubsub.emit(Constant.IS_AUTH_ERR, err);
+				this.pubsub.emit(Constant.EVENT.IS_AUTH_ERR, { err });
 				reject(err);
 			}
 		});
@@ -96,7 +96,7 @@ class InternetIdentity {
 	}
 
 	async logout() {
-		this.pubsub.emit(Constant.LOGOUT_BUSY);
+		this.pubsub.emit(Constant.EVENT.LOGOUT_BUSY);
 		return new Promise(async (resolve, reject) => {
 			try {
 				await this.ii.logout();
@@ -104,10 +104,10 @@ class InternetIdentity {
 				this.agent = null;
 				this.principal = null;
 				this.accountid = null;
-				this.pubsub.emit(Constant.LOGOUT_OK);
+				this.pubsub.emit(Constant.EVENT.LOGOUT_OK);
 				resolve();
 			} catch (err) {
-				this.pubsub.emit(Constant.LOGOUT_ERR, err);
+				this.pubsub.emit(Constant.EVENT.LOGOUT_ERR, { err });
 				reject(err);
 			}
 		});

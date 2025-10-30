@@ -24,40 +24,40 @@ Uint8Array.prototype.toJSON = function () {
 }
 
 const wallet = new Wallet();
-wallet.pubsub.on(WalletConstant.IS_AUTH_ERR, () => {
+wallet.pubsub.on(WalletConstant.EVENT.IS_AUTH_ERR, () => {
   wallet.btn("Connect Wallet");
   render0()
 });
-wallet.pubsub.on(WalletConstant.CLIENT_ERR, () => {
+wallet.pubsub.on(WalletConstant.EVENT.CLIENT_ERR, () => {
   wallet.btn("Connect Wallet");
   render0()
 });
-wallet.pubsub.on(WalletConstant.ANON_OK, () => {
+wallet.pubsub.on(WalletConstant.EVENT.ANON_OK, () => {
   wallet.btn("Connect Wallet");
   render0()
 });
-wallet.pubsub.on(WalletConstant.LOGIN_BUSY, () => {
+wallet.pubsub.on(WalletConstant.EVENT.LOGIN_BUSY, () => {
   wallet.btn("Connecting...", true);
   render0()
 });
-wallet.pubsub.on(WalletConstant.LOGIN_OK, () => {
+wallet.pubsub.on(WalletConstant.EVENT.LOGIN_OK, () => {
   console.log('user_p:\n', wallet.get().principal.toText());
   wallet.btn("Disconnect Wallet");
   render0()
 });
-wallet.pubsub.on(WalletConstant.LOGIN_ERR, () => {
+wallet.pubsub.on(WalletConstant.EVENT.LOGIN_ERR, () => {
   wallet.btn("Connect Wallet");
   render0()
 });
-wallet.pubsub.on(WalletConstant.LOGOUT_BUSY, () => {
+wallet.pubsub.on(WalletConstant.EVENT.LOGOUT_BUSY, () => {
   wallet.btn("Disconnecting...", true)
   render0()
 });
-wallet.pubsub.on(WalletConstant.LOGOUT_OK, () => {
+wallet.pubsub.on(WalletConstant.EVENT.LOGOUT_OK, () => {
   wallet.btn("Connect Wallet");
   render0()
 });
-wallet.pubsub.on(WalletConstant.LOGOUT_ERR, () => {
+wallet.pubsub.on(WalletConstant.EVENT.LOGOUT_ERR, () => {
   wallet.btn("Disconnect Wallet");
   render0()
 });

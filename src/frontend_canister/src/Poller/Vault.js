@@ -5,6 +5,7 @@ import { HttpAgent } from '@dfinity/agent';
 import { wait } from '../../../util/js/wait';
 import { genActor } from '../../../util/js/actor';
 import Principal from '../../../util/js/principal';
+import PubSub from "../../../util/js/pubsub";
 
 class Vault {
   wallet = null;
@@ -12,6 +13,14 @@ class Vault {
 
   tokens = new Map();
   books = new Map();
+  pubsub = new PubSub();
+
+  static NEW_BOOK = "new-book";
+  static NEW_TOKEN = "new-token";
+  static WITHDRAWAL_FEES = "withdrawal-fees";
+  static BALANCES = "vault-balances";
+  static ABORT = "vault-abort";
+  static ERR = "vault-err";
 
   constructor(wallet) {
     this.wallet = wallet;
@@ -22,12 +31,14 @@ class Vault {
     try {
       this.anon = await genActor(idlFactory, canisterId);
       const result = await this.anon.vault_executors([], []);
-      
       for (const p of result) {
-        this.books.set(p, new Book(p, this.wallet));
+        this.books.set(p, new Book(p, this.wallet, this.pubsub));
       }
+      if (result.length > 0) this.pubsub.emit(Vault.NEW_BOOK, { ids: result });
     } catch (cause) {
-      throw new Error('get books:', { cause });
+      const err = new Error('get books:', { cause });
+      this.pubsub.emit(Vault.ABORT, { err });
+      throw err;
     }
 
     try {
@@ -37,11 +48,14 @@ class Vault {
         this.tokens.set(p, {
           withdrawal_fee: 0,
           balance: 0,
-          actor: new Token(p, Principal.fromText(canisterId), this.wallet)
+          actor: new Token(p, Principal.fromText(canisterId), this.wallet, this.pubsub)
         });
-      }      
+      }
+      if (result.length > 0) this.pubsub.emit(Vault.NEW_TOKEN, { ids: result });
     } catch (cause) {
-      throw new Error('get tokens:', { cause });
+      const err = new Error('get tokens:', { cause });
+      this.pubsub.emit(Vault.ABORT, { err });
+      throw err;
     }
     if (this.tokens.size == 0) throw new Error('no tokens');
   
@@ -50,16 +64,21 @@ class Vault {
     try {
       const withdrawal_fees = await this.anon.vault_withdrawal_fees_of(t_ids);
       
+      const fees = [];
       for (let i = 0; i < t_ids.length; i++) {
         const token_id = t_ids[i];
         const withdrawal_fee = withdrawal_fees[i];
         
         if (withdrawal_fee.length > 0) {
           this.tokens.get(token_id).withdrawal_fee = withdrawal_fee[0];
+          fees.push({ id: token_id, fee: withdrawal_fee[0] });
         }
       }
+      if (withdrawal_fees.length > 0) this.pubsub.emit(Vault.WITHDRAWAL_FEES, { fees });
     } catch (cause) {
-      throw new Error('get withdrawal_fees:', { cause });
+      const err = new Error('get withdrawal_fees:', { cause });
+      this.pubsub.emit(Vault.ABORT, { err });
+      throw err;
     }
 
     setInterval(async () => {
@@ -72,11 +91,16 @@ class Vault {
 
         const bals = await this.anon.vault_unlocked_balances_of(accounts);
 
+        const balances = [];
         for (let i = 0; i < t_ids.length; i++) {
           this.tokens.get(t_ids[i]).balance = bals[i];
+          balances.push({ id: t_ids[i], balance: bals[i] });
         }
+        this.pubsub.emit(Vault.BALANCES, { balances });
       } catch (cause) {
-        throw new Error('get unlocked_balances:', { cause });
+        const err = new Error('get unlocked_balances:', { cause });
+        this.pubsub.emit(Vault.ERR, { err });
+        throw err;
       }
     }, 2000);
   }

@@ -1,5 +1,15 @@
 import Order from './Order';
 import Amount from '../Types/Amount';
+import { wait, retry } from '../../../util/js/wait';
+
+function setsEqual(set1, set2) {
+  if (set1.size !== set2.size) return false;
+  for (const value of set1) {
+    if (!set2.has(value)) return false;
+  }
+  return true;
+}
+
 
 class Price {
 	level = 0;
@@ -7,37 +17,54 @@ class Price {
 	oids = new Set();
 	base = new Amount();
 
-	constructor(book_anon, is_buy, orders, new_oids, trades, new_tids) {
-		const orders_at = is_buy? book_anon.book_bids_at : book_anon.book_asks_at;
+	constructor(book_anon, is_buy, orders, new_oids, trades, new_tids, pubsub) {
+		this.book_anon = book_anon;
+		this.orders = orders;
+		this.new_oids = new_oids;
+		this.trades = trades;
+		this.new_tids = new_tids;
+		this.pubsub = pubsub;
 
-		setInterval(async () => {
-			if (this.level == 0) return;
-			let prev = [];
-			const _oids = new Set();
-			const _base = new Amount();
-			try {
-				getting: while (true) {
-					const oids = await orders_at(this.level, prev, []);
-					if (oids.length == 0) break getting;
-					prev = [oids[oids.length - 1]];
-					for (const oid of oids) {
-						_oids.add(oid);
-						const o = orders.get(oid);
-						if (!o) {
-							orders.set(oid, new Order(oid, book_anon, trades, new_tids));
-							new_oids.push(oid);
-						} else {
-							_base.add(o.base);
+		this.#init(is_buy);
+	}
+
+	async #init(is_buy) {
+		const orders_at = is_buy? this.book_anon.book_bids_at : this.book_anon.book_asks_at;
+		let delay = 1000;
+		while (true) {
+			if (this.level > 0n) {
+				let prev = [];
+				const _oids = new Set();
+				const _base = new Amount();
+				try {
+					getting: while (true) {
+						const oids = await orders_at(this.level, prev, []);
+						if (oids.length == 0) break getting;
+						prev = [oids[oids.length - 1]];
+						for (const oid of oids) {
+							_oids.add(oid);
+							const o = this.orders.get(oid);
+							if (!o) {
+								this.orders.set(oid, new Order(oid, this.book_anon, this.trades, this.new_tids, this.pubsub));
+								this.new_oids.push(oid);
+							} else {
+								_base.add(o.base);
+							}
 						}
 					}
+					const has_change = !setsEqual(this.oids, _oids);
+					delay = retry(has_change, delay);
+					this.oids = _oids;
+					this.base = _base;
+					if (this.oids.size == 0) this.changeLevel(0n);
+				} catch (cause) {
+					delay = retry(false, delay);
+					const err = new Error(`price oids:`, { cause });
+        this.pubsub.emit(Book.ERR, { id: this.id, err });
 				}
-				this.oids = _oids;
-				this.base = _base;
-				if (this.oids.size == 0) this.level = 0;
-			} catch (cause) {
-				console.error('price oids', cause);
-			}
-		}, 1000);
+			} else delay = retry(false, delay);
+			await wait(delay);
+		}
 	}
 
 	changeLevel(lvl = 0n) {

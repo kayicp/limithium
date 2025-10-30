@@ -1,11 +1,13 @@
 export default class Constant {
-	static IS_AUTH_ERR = 'is-auth-err';
-  static CLIENT_ERR = 'client-err';
-  static ANON_OK = 'anon-ok';
-  static LOGIN_BUSY = 'login-busy';
-  static LOGIN_OK = 'login-ok';
-  static LOGIN_ERR = 'login-err';
-  static LOGOUT_BUSY = 'logout-busy';
-  static LOGOUT_OK = 'logout-ok';
-  static LOGOUT_ERR = 'logout-err';
+  static EVENT = {
+    IS_AUTH_ERR: 'is-auth-err',
+    CLIENT_ERR: 'client-err',
+    ANON_OK: 'anon-ok',
+    LOGIN_BUSY: 'login-busy',
+    LOGIN_OK: 'login-ok',
+    LOGIN_ERR: 'login-err',
+    LOGOUT_BUSY: 'logout-busy',
+    LOGOUT_OK: 'logout-ok',
+    LOGOUT_ERR: 'logout-err',
+  };
 } 
