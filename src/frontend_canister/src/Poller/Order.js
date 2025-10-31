@@ -7,20 +7,29 @@ class Order {
 	owner = null;
 	block = null;
 	exec = null;
-	price = 0n;
+	price = null;
 	closed_at = null;
 	closed_reason = null;
-	expires_at = 0n;
+	expires_at = null;
 	subacc = null;
-	created_at = 0n;
+	created_at = null;
 	tids = [];
 
-	constructor(id, book_anon, trades, new_tids) {
+	err = null;
+
+	constructor(id, book_anon, trades, new_tids, wallet) {
 		this.id = id;
 		this.book_anon = book_anon;
 		this.trades = trades;
 		this.new_tids = new_tids;
+		this.wallet = wallet;
+		this.pubsub = wallet.pubsub;
 		this.#init();
+	}
+
+	#render(err = null) {
+		this.err = err;
+		this.pubsub.emit("render");
 	}
 
 	async #init() {
@@ -40,9 +49,11 @@ class Order {
 					}
 				}
 				delay = retry(has_change, delay);
+				if (has_change) this.#render();
 			} catch (cause) {
 				delay = retry(false, delay)
-				console.error('trades', cause)
+				const err = new Error('order trades:', { cause });
+				this.#render(err);
 			}
 			await wait(delay);
 		}

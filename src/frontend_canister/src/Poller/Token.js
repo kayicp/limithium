@@ -3,16 +3,12 @@ import { wait, retry } from '../../../util/js/wait';
 import { genActor } from '../../../util/js/actor';
 
 class Token {
-
-  static META = "token-meta";
-  static BALANCE = "token-balance";
-  static ABORT = "token-abort";
-  static ERR = "token-err";
-
   id = null;
   anon = null;
   wallet = null;
   vault_id = null;
+  pubsub = null;
+  err = null;
 
   name = null;
   symbol = null;
@@ -23,12 +19,18 @@ class Token {
   allowance = 0;
   expires_at = null;
 
-  constructor(token_id, vault_id, wallet, pubsub) {
+
+  constructor(token_id, vault_id, wallet) {
     this.id = token_id;
-    this.wallet = wallet;
     this.vault_id = vault_id;
-    this.pubsub = pubsub;
+    this.wallet = wallet;
+    this.pubsub = wallet.pubsub;
     this.#init();
+  }
+
+  #render(err = null) {
+    this.err = err;
+    this.pubsub.emit("render");
   }
 
   async #init() {
@@ -44,11 +46,10 @@ class Token {
       this.symbol = symbol;
       this.decimals = decimals;
       this.fee = fee;
-      this.pubsub.emit(Token.META, { id: this.id });
+      this.#render();
     } catch (cause) {
       const err = new Error(`token meta:`, { cause });
-      this.pubsub.emit(Token.ABORT, { id: this.id, err });
-      throw err;
+      return this.#render(err);
     }
 
     let delay = 1000;
@@ -71,12 +72,12 @@ class Token {
           if (this.expires_at != approval.expires_at[0]) has_change = true;
           this.expires_at = approval.expires_at[0];
           delay = retry(has_change, delay);
-          this.pubsub.emit(Token.BALANCE, { id: this.id });
+          if (has_change) this.#render();
         } else delay = retry(true, delay);
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error('token balance', { cause });
-        this.pubsub.emit(Token.ERR, { id: this.id, err });
+        this.#render(err);
       };
       await wait(delay)
     }

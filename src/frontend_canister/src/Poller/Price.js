@@ -17,15 +17,23 @@ class Price {
 	oids = new Set();
 	base = new Amount();
 
-	constructor(book_anon, is_buy, orders, new_oids, trades, new_tids, pubsub) {
+	err = null;
+
+	constructor(book_anon, is_buy, orders, new_oids, trades, new_tids, wallet) {
 		this.book_anon = book_anon;
 		this.orders = orders;
 		this.new_oids = new_oids;
 		this.trades = trades;
 		this.new_tids = new_tids;
-		this.pubsub = pubsub;
+		this.wallet = wallet;
+		this.pubsub = wallet.pubsub;
 
 		this.#init(is_buy);
+	}
+
+	#render(err = null) {
+		this.err = err;
+		this.pubsub.emit('render');
 	}
 
 	async #init(is_buy) {
@@ -45,7 +53,7 @@ class Price {
 							_oids.add(oid);
 							const o = this.orders.get(oid);
 							if (!o) {
-								this.orders.set(oid, new Order(oid, this.book_anon, this.trades, this.new_tids, this.pubsub));
+								this.orders.set(oid, new Order(oid, this.book_anon, this.trades, this.new_tids, this.wallet));
 								this.new_oids.push(oid);
 							} else {
 								_base.add(o.base);
@@ -57,10 +65,11 @@ class Price {
 					this.oids = _oids;
 					this.base = _base;
 					if (this.oids.size == 0) this.changeLevel(0n);
+					if (has_change) this.#render();
 				} catch (cause) {
 					delay = retry(false, delay);
 					const err = new Error(`price oids:`, { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err });
+        	this.#render(err);
 				}
 			} else delay = retry(false, delay);
 			await wait(delay);

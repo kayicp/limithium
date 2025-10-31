@@ -1,17 +1,27 @@
 import InternetIdentity from "./InternetIdentity";
-import PubSub from "../../../util/js/pubsub";
 import { html } from 'lit-html';
 
 class Wallet {
   ii = null;
-  pubsub = new PubSub();
   button = null;
 
-  constructor() {
-		this.ii = new InternetIdentity(this.pubsub);
+  constructor(pubsub) {
+    pubsub.on('render', this.render);
+    this.ii = new InternetIdentity(pubsub);
   }
 
   get() { return this.ii }
+
+  render() {
+    const busy = this.get().busy;
+    if (this.get().principal) {
+      this.btn(busy? "Disconnecting..." : "Disconnect Wallet", busy);
+    } else {
+      this.btn(busy? "Connecting..." : "Connect Wallet", busy)
+    };
+    const err = this.get().err;
+    if (err) console.error(err); 
+  }
 
   btn(inner, disabled = false) {
     this.button = html`

@@ -18,18 +18,6 @@ function equalMaps(map1, map2) {
 
 // todo: maybe we only need "render", and draw html after calls
 class Book {
-  static BIDS = "book-bids";
-  static USER_BID_LVLS = "user-bid-lvls";
-  static USER_BIDS = "user-bids";
-  static ASKS = "book-asks";
-  static USER_ASK_LVLS = "user-ask-lvls";
-  static USER_ASKS = "user-asks";
-  static ORDERS = "orders";
-  static RECENTS = "recent-trades";
-  static TRADES = "get-trades";
-  static ABORT = "book-abort";
-  static ERR = "book-err";
-
   wallet = null;
   anon = null;
   id = null;
@@ -49,13 +37,18 @@ class Book {
   recents = [];
   new_tids = [];
   
-  constructor(book_id, wallet, pubsub) {
-    this.wallet = wallet;
+  constructor(book_id, wallet) {
     this.id = book_id;
-    this.pubsub = pubsub;
+    this.wallet = wallet;
+    this.pubsub = wallet.pubsub;
 
     this.recents = Array.from({ length : 12 }, () => null);
     this.#init();
+  }
+
+  #render(err = null) {
+    this.err = err;
+    this.pubsub.emit('render');
   }
 
   async #init() {
@@ -63,8 +56,7 @@ class Book {
       this.anon = await genActor(idlFactory, this.id);
     } catch (cause) {
       const err = new Error(`token meta:`, { cause }); 
-      this.pubsub.emit(Book.ABORT, { id: this.id, err });
-      throw err;
+      return this.#render(err);
     }
     this.#initAsks();
     this.#initBids();
@@ -79,7 +71,7 @@ class Book {
   }
 
   async #initAsks() {
-    this.asks = Array.from({ length : 6 }, () => new Price(this.anon, false, this.orders, this.new_oids, this.trades, this.new_tids, this.pubsub));
+    this.asks = Array.from({ length : 6 }, () => new Price(this.anon, false, this.orders, this.new_oids, this.trades, this.new_tids, this.wallet));
 
     let delay = 1000; // start with 1 second
     while (true) {
@@ -91,19 +83,19 @@ class Book {
           if (price != this.asks[i].level) has_change = true;
           this.asks[i].changeLevel(price);
         }
-        if (has_change) this.pubsub.emit(Book.ASKS, { id: this.id });
+        if (has_change) this.#render();
         delay = retry(has_change, delay);
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error('ask prices:', { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err });
+        this.#render(err);
       }
       await wait(delay);
     }
   }
 
   async #initBids() {
-    this.bids = Array.from({ length : 6 }, () => new Price(this.anon, true, this.orders, this.new_oids, this.trades, this.new_tids));
+    this.bids = Array.from({ length : 6 }, () => new Price(this.anon, true, this.orders, this.new_oids, this.trades, this.new_tids, wallet));
 
     let delay = 1000; // start with 1 second
     while (true) {
@@ -115,12 +107,12 @@ class Book {
           if (price != this.bids[i].level) has_change = true;
           this.bids[i].changeLevel(price);
         }
-        if (has_change) this.pubsub.emit(Book.BIDS, { id: this.id });
+        if (has_change) this.#render();
         delay = retry(has_change, delay);
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error('bid prices:', { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err });
+        this.#render(err);
       }
       await wait(delay);
     }
@@ -141,19 +133,19 @@ class Book {
             user_buy_lvls.set(lvl, oid);
             const o = this.orders.get(oid);
             if (!o) {
-              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids, this.pubsub));
+              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids, this.wallet));
               this.new_oids.push(oid);
             }
           }
         }
         const has_change = !equalMaps(this.user_buy_lvls, user_buy_lvls);
         this.user_buy_lvls = user_buy_lvls;
-        if (has_change) this.pubsub.emit(Book.USER_BID_LVLS, { id: this.id });
+        if (has_change) this.#render();
         delay = retry(has_change, delay);
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error(`user's buy levels:`, { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err });
+        this.#render(err);
       }
       await wait(delay);
     }
@@ -174,19 +166,19 @@ class Book {
             user_sell_lvls.set(lvl, oid);
             const o = this.orders.get(oid);
             if (!o) {
-              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids, this.pubsub));
+              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids, this.wallet));
               this.new_oids.push(oid);
             }
           }
         }
         const has_change = !equalMaps(this.user_sell_lvls, user_sell_lvls);
         delay = retry(has_change, delay);
-        if (has_change) this.pubsub.emit(Book.USER_ASK_LVLS, { id: this.id });
         this.user_sell_lvls = user_sell_lvls;
+        if (has_change) this.#render();
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error("user's sell levels", { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err })
+        this.#render(err);
       }
       await wait(delay);
     }
@@ -207,18 +199,18 @@ class Book {
           for (const oid of buys) {
             const o = this.orders.get(oid);
             if (!o) {
-              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids, this.pubsub));
+              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids, this.wallet));
               this.new_oids.push(oid);
               this.user_buys.push(oid);
             } else break;
           }
         }
         delay = retry(has_new, delay);
-        if (has_new) this.pubsub.emit(Book.USER_BIDS, { id: this.id });
+        if (has_new) this.#render();
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error("user's buys", { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err });
+        this.#render(err);
       }
       await wait(delay);
     };
@@ -240,18 +232,18 @@ class Book {
           for (const oid of sells) {
             const o = this.orders.get(oid);
             if (!o) {
-              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids, this.pubsub));
+              this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids, this.wallet));
               this.new_oids.push(oid);
               this.user_sells.push(oid);
             }
           }
         }
         delay = retry(has_new, delay);
-        if (has_new) this.pubsub.emit(Book.USER_ASKS, { id: this.id });
+        if (has_new) this.#render();
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error("user's sells", { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err });
+        this.#render(err);
       }
       await wait(delay);
     }
@@ -297,11 +289,11 @@ class Book {
           this.new_oids.splice(0, sides.length);
         };
         delay = retry(true, delay);
-        this.pubsub.emit(Book.ORDERS, { id: this.id });
+        this.#render();
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error("get orders", { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err });
+        this.#render(err);
       }
       await wait(delay);
     }
@@ -325,11 +317,11 @@ class Book {
           };
         }
         delay = retry(has_change, delay);
-        if (has_change) this.pubsub.emit(Book.RECENTS, { id: this.id });
+        if (has_change) this.#render();
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error("recent trades", { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err });
+        this.#render(err);
       }
       await wait(delay);
     };
@@ -387,11 +379,11 @@ class Book {
           this.new_tids.splice(0, sell_ids.length);
         }
         delay = retry(true, delay);
-        this.pubsub.emit(Book.TRADES, { id: this.id });
+        this.#render();  
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error("get trades", { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err });
+        this.#render(err);
       }
       await wait(delay);
     };
@@ -429,12 +421,12 @@ class Book {
           }
           oids.splice(0, closedats.length);
         }
-        if (has_change) this.pubsub.emit(Book.UPDATE_ORDERS, { id: this.id });
+        if (has_change) this.#render();
         delay = retry(has_change, delay);
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error("update orders", { cause });
-        this.pubsub.emit(Book.ERR, { id: this.id, err });
+        this.#render(err);
       }
       await wait(delay);
     }

@@ -2,9 +2,9 @@ import { html, render } from 'lit-html';
 import logo from './logo2.svg';
 import Wallet from './Wallet/Wallet';
 import Vault from './Poller/Vault';
-import WalletConstant from './Wallet/Constants';
 import Deposit from './Element/Deposit';
 import Withdraw from './Element/Withdraw';
+import PubSub from '../../util/js/pubsub';
 
 /*
   6AF4AE green
@@ -23,54 +23,16 @@ Uint8Array.prototype.toJSON = function () {
   return blob2hex(this) // Array.from(this).toString();
 }
 
-const wallet = new Wallet();
-wallet.pubsub.on(WalletConstant.EVENT.IS_AUTH_ERR, () => {
-  wallet.btn("Connect Wallet");
-  render0()
-});
-wallet.pubsub.on(WalletConstant.EVENT.CLIENT_ERR, () => {
-  wallet.btn("Connect Wallet");
-  render0()
-});
-wallet.pubsub.on(WalletConstant.EVENT.ANON_OK, () => {
-  wallet.btn("Connect Wallet");
-  render0()
-});
-wallet.pubsub.on(WalletConstant.EVENT.LOGIN_BUSY, () => {
-  wallet.btn("Connecting...", true);
-  render0()
-});
-wallet.pubsub.on(WalletConstant.EVENT.LOGIN_OK, () => {
-  console.log('user_p:\n', wallet.get().principal.toText());
-  wallet.btn("Disconnect Wallet");
-  render0()
-});
-wallet.pubsub.on(WalletConstant.EVENT.LOGIN_ERR, () => {
-  wallet.btn("Connect Wallet");
-  render0()
-});
-wallet.pubsub.on(WalletConstant.EVENT.LOGOUT_BUSY, () => {
-  wallet.btn("Disconnecting...", true)
-  render0()
-});
-wallet.pubsub.on(WalletConstant.EVENT.LOGOUT_OK, () => {
-  wallet.btn("Connect Wallet");
-  render0()
-});
-wallet.pubsub.on(WalletConstant.EVENT.LOGOUT_ERR, () => {
-  wallet.btn("Disconnect Wallet");
-  render0()
-});
-
+const pubsub = new PubSub();
+const wallet = new Wallet(pubsub);
 const vault = new Vault(wallet);
 const deposit = new Deposit(vault);
 const withdraw = new Withdraw(vault);
 
-// todo: poller wait 1s every new update, use events, 
+pubsub.on('render', _render);
+window.addEventListener('popstate', _render);
 
-window.addEventListener('popstate', render0);
-
-function render0() {
+function _render() {
   const pathn = window.location.pathname;
   let page = html`<h1>404: Not Found</h1>`;
   if (pathn == "/") {
@@ -95,7 +57,7 @@ function render0() {
 
 class App {
   constructor() {
-    render0();
+    _render();
   }
 }
 

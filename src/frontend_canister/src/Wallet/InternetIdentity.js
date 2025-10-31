@@ -2,7 +2,6 @@ import { AuthClient } from "@dfinity/auth-client";
 import { HttpAgent } from '@dfinity/agent';
 import Principal from '../../../util/js/principal';
 import { AccountIdentifier } from '@dfinity/ledger-icp'
-import Constant from "./Constants";
 
 const network = process.env.DFX_NETWORK;
 const identityProvider =
@@ -13,56 +12,70 @@ const identityProvider =
 const DAYS_30_NANOS = BigInt(30 * 24 * 60 * 60 * 1000 * 1000 * 1000);
 
 class InternetIdentity {
+	busy = false;
+	err = null;
+	pubsub = null;
+
   ii = null;
 	agent = null;
 	principal = null;
 	accountid = null;
-	pubsub = null;
 
   constructor(pubsub) {
 		this.pubsub = pubsub;
 		this.#init();
   }
 
+	#render(busy = false, err = null) {
+		this.busy = busy;
+		this.err = err;
+		this.pubsub.emit('render');
+	}
+
   async #init() {
-		this.pubsub.emit(Constant.EVENT.LOGIN_BUSY);
+		this.#render(true);
     if (this.ii == null) try {
       this.ii = await AuthClient.create();
-    } catch (err) {
-			return this.pubsub.emit(Constant.EVENT.CLIENT_ERR, { err });
+    } catch (cause) {
+			const err = new Error('init client', { cause });
+			return this.#render(false, err);
     }
     try {
       if (await this.ii.isAuthenticated()) {
 				// proceed to #authed
-			} else return this.pubsub.emit(Constant.EVENT.ANON_OK);
-    } catch (err) {
-			return this.pubsub.emit(Constant.EVENT.IS_AUTH_ERR, { err });
+			} else return this.#render(false);
+    } catch (cause) {
+			const err = new Error('init auth', { cause });
+			return this.#render(false, err);
     }
 		try {
 			await this.#authed();
-			this.pubsub.emit(Constant.EVENT.LOGIN_OK);
-		} catch (err) {
-			this.pubsub.emit(Constant.EVENT.LOGIN_ERR, { err });
+			this.#render(false);
+		} catch (cause) {
+			const err = new Error('init login', { cause });
+			return this.#render(false, err);
 		}
   }
 
 	async login() {
-		this.pubsub.emit(Constant.EVENT.LOGIN_BUSY);
+		this.#render(true);
 		return new Promise(async (resolve, reject) => {
 			if (this.ii == null) try {
 				this.ii = await AuthClient.create();
-			} catch (err) {
-				this.pubsub.emit(Constant.EVENT.CLIENT_ERR, { err });
+			} catch (cause) {
+				const err = new Error('login client', { cause });
+				this.#render(false, err);
 				return reject(err);
 			}
 			const self = this;
 			async function onSuccess() {
 				try {
 					await self.#authed();
-					self.pubsub.emit(Constant.EVENT.LOGIN_OK);
+					self.#render(false);
 					resolve();
-				} catch (err) {
-					self.emit(Constant.EVENT.LOGIN_ERR, { err });
+				} catch (cause) {
+					const err = new Error('login', { cause });
+					this.#render(false, err);
 					reject(err);
 				}
 			}
@@ -74,8 +87,9 @@ class InternetIdentity {
 					identityProvider,
 					onSuccess,
 				});
-			} catch (err) {
-				this.pubsub.emit(Constant.EVENT.IS_AUTH_ERR, { err });
+			} catch (cause) {
+				const err = new Error('is auth', { cause });
+				this.#render(false, err);
 				reject(err);
 			}
 		});

@@ -1,30 +1,29 @@
 import { idlFactory, canisterId } from 'declarations/vault_canister';
 import Token from './Token';
 import Book from './Book';
-import { HttpAgent } from '@dfinity/agent';
-import { wait } from '../../../util/js/wait';
+import { wait, retry } from '../../../util/js/wait';
 import { genActor } from '../../../util/js/actor';
 import Principal from '../../../util/js/principal';
-import PubSub from "../../../util/js/pubsub";
 
 class Vault {
+  pubsub = null;
+  err = null;
+
   wallet = null;
   anon = null;
 
   tokens = new Map();
   books = new Map();
-  pubsub = new PubSub();
-
-  static NEW_BOOK = "new-book";
-  static NEW_TOKEN = "new-token";
-  static WITHDRAWAL_FEES = "withdrawal-fees";
-  static BALANCES = "vault-balances";
-  static ABORT = "vault-abort";
-  static ERR = "vault-err";
 
   constructor(wallet) {
     this.wallet = wallet;
+    this.pubsub = wallet.pubsub;
     this.#init();
+  }
+
+  #render(err = null) {
+    this.err = err;
+    this.pubsub.emit('render');
   }
 
   async #init() {
@@ -34,30 +33,26 @@ class Vault {
       for (const p of result) {
         this.books.set(p, new Book(p, this.wallet, this.pubsub));
       }
-      if (result.length > 0) this.pubsub.emit(Vault.NEW_BOOK, { ids: result });
+      this.#render();
     } catch (cause) {
-      const err = new Error('get books:', { cause });
-      this.pubsub.emit(Vault.ABORT, { err });
-      throw err;
+      const err = new Error('get books', { cause });
+      return this.#render(err);
     }
 
     try {
       const result = await this.anon.vault_tokens([], []);
-      
       for (const p of result) {
         this.tokens.set(p, {
           withdrawal_fee: 0,
           balance: 0,
-          actor: new Token(p, Principal.fromText(canisterId), this.wallet, this.pubsub)
+          actor: new Token(p, Principal.fromText(canisterId), this.wallet)
         });
       }
-      if (result.length > 0) this.pubsub.emit(Vault.NEW_TOKEN, { ids: result });
+      this.#render();
     } catch (cause) {
       const err = new Error('get tokens:', { cause });
-      this.pubsub.emit(Vault.ABORT, { err });
-      throw err;
+      return this.#render(err);
     }
-    if (this.tokens.size == 0) throw new Error('no tokens');
   
     const t_ids = [...this.tokens.keys()];
 
@@ -74,35 +69,37 @@ class Vault {
           fees.push({ id: token_id, fee: withdrawal_fee[0] });
         }
       }
-      if (withdrawal_fees.length > 0) this.pubsub.emit(Vault.WITHDRAWAL_FEES, { fees });
+      this.#render();
     } catch (cause) {
       const err = new Error('get withdrawal_fees:', { cause });
-      this.pubsub.emit(Vault.ABORT, { err });
-      throw err;
+      return this.#render(err);
     }
 
-    setInterval(async () => {
-      // Get unlocked balances
+    let delay = 1000;
+    while (true) {
       const user_p = this.wallet.get().principal;
       if (user_p == null) return;
       try {
+        let has_new = false;
         const account = { owner: user_p, subaccount: [] };
         const accounts = t_ids.map(token => ({ token, account }));
-
+  
         const bals = await this.anon.vault_unlocked_balances_of(accounts);
-
-        const balances = [];
+  
         for (let i = 0; i < t_ids.length; i++) {
-          this.tokens.get(t_ids[i]).balance = bals[i];
-          balances.push({ id: t_ids[i], balance: bals[i] });
+          const t = this.tokens.get(t_ids[i]);
+          if (t.balance != bals[i]) has_new = true;
+          t.balance = bals[i];
         }
-        this.pubsub.emit(Vault.BALANCES, { balances });
+        if (has_new) this.#render();
+        delay = retry(has_new, delay);
       } catch (cause) {
+        delay = retry(false, delay);
         const err = new Error('get unlocked_balances:', { cause });
-        this.pubsub.emit(Vault.ERR, { err });
-        throw err;
+        this.#render(err);
       }
-    }, 2000);
+      await wait(delay)
+    }
   }
 
 }
