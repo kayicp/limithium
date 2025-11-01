@@ -29,7 +29,7 @@ class Order {
 
 	#render(err = null) {
 		this.err = err;
-		this.pubsub.emit("render");
+		this.pubsub.emit('render');
 	}
 
 	async #init() {

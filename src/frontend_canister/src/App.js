@@ -2,8 +2,8 @@ import { html, render } from 'lit-html';
 import logo from './logo2.svg';
 import Wallet from './Wallet/Wallet';
 import Vault from './Poller/Vault';
-import Deposit from './Element/Deposit';
-import Withdraw from './Element/Withdraw';
+import Balances from './Element/Balances';
+import Market from './Element/Market';
 import PubSub from '../../util/js/pubsub';
 
 /*
@@ -26,8 +26,8 @@ Uint8Array.prototype.toJSON = function () {
 const pubsub = new PubSub();
 const wallet = new Wallet(pubsub);
 const vault = new Vault(wallet);
-const deposit = new Deposit(vault);
-const withdraw = new Withdraw(vault);
+const deposit = new Balances(vault);
+const market = new Market(vault);
 
 pubsub.on('render', _render);
 window.addEventListener('popstate', _render);
@@ -37,20 +37,20 @@ function _render() {
   let page = html`<h1>404: Not Found</h1>`;
   if (pathn == "/") {
     page = html`<p>hello world</p>`
-  } else if (pathn.includes(Deposit.PATH)) {
+  } else if (pathn.includes(Balances.PATH)) {
     page = deposit.page;
-  } else if (pathn.includes(Withdraw.PATH)) {
-    page = withdraw.page;
+  } else if (pathn.includes(Market.PATH)) {
+    page = market.page;
   }
 
   const body = html`
     <div>
-      <button>Market</button>
+      ${market.button}
       ${deposit.button}
-      ${withdraw.button}
       ${wallet.button}
     </div>
     ${page}
+    <div>footer</div>
   `;
   render(body, document.getElementById('root'));
 }

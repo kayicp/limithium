@@ -1,7 +1,7 @@
 import { html } from 'lit-html';
 
-export default class Deposit {
-	static PATH = '/deposit';
+export default class Market {
+	static PATH = '/market';
 
 	constructor(vault) {
 		this.vault = vault;
@@ -9,9 +9,9 @@ export default class Deposit {
 		<button @click=${(e) => {
 				e.preventDefault();
 				this.#render();
-				history.pushState({}, '', Deposit.PATH);
+				history.pushState({}, '', Market.PATH);
 				window.dispatchEvent(new PopStateEvent('popstate'));
-			}}>Deposit</button>
+			}}>Market</button>
 		`;
 
 		this.page = null;
@@ -19,7 +19,7 @@ export default class Deposit {
 
 	#render() {
 		// for ()
-		this.page = html`<div></div>`
+		this.page = html`<div>MARKET</div>`
 	}
 
 }

@@ -3,11 +3,13 @@ import { html } from 'lit-html';
 
 class Wallet {
   ii = null;
+  pubsub = null;
   button = null;
 
   constructor(pubsub) {
-    pubsub.on('render', this.render);
+    this.pubsub = pubsub;
     this.ii = new InternetIdentity(pubsub);
+    this.pubsub.on('render', () => this.render());
   }
 
   get() { return this.ii }

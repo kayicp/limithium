@@ -43,7 +43,7 @@ class InternetIdentity {
     try {
       if (await this.ii.isAuthenticated()) {
 				// proceed to #authed
-			} else return this.#render(false);
+			} else return this.#render();
     } catch (cause) {
 			const err = new Error('init auth', { cause });
 			return this.#render(false, err);
@@ -102,6 +102,7 @@ class InternetIdentity {
 				this.agent = await HttpAgent.create({ identity });
 				this.principal = await identity.getPrincipal();
 				this.accountid = AccountIdentifier.fromPrincipal({ principal: this.principal }).toHex();
+				console.log('p\n', this.principal.toText(), 'a\n', this.accountid);
 				resolve();
 			} catch (err) {
 				reject(err);
@@ -110,7 +111,7 @@ class InternetIdentity {
 	}
 
 	async logout() {
-		this.pubsub.emit(Constant.EVENT.LOGOUT_BUSY);
+		this.#render(true);
 		return new Promise(async (resolve, reject) => {
 			try {
 				await this.ii.logout();
@@ -118,10 +119,11 @@ class InternetIdentity {
 				this.agent = null;
 				this.principal = null;
 				this.accountid = null;
-				this.pubsub.emit(Constant.EVENT.LOGOUT_OK);
+				this.#render();
 				resolve();
-			} catch (err) {
-				this.pubsub.emit(Constant.EVENT.LOGOUT_ERR, { err });
+			} catch (cause) {
+				const err = new Error('logout', { cause });
+				this.#render(false, err)
 				reject(err);
 			}
 		});

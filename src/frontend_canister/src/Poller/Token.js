@@ -13,6 +13,7 @@ class Token {
   name = null;
   symbol = null;
   decimals = null;
+  power = null;
   fee = null;
 
   balance = 0;
@@ -30,7 +31,7 @@ class Token {
 
   #render(err = null) {
     this.err = err;
-    this.pubsub.emit("render");
+    this.pubsub.emit('render');
   }
 
   async #init() {
@@ -46,6 +47,7 @@ class Token {
       this.symbol = symbol;
       this.decimals = decimals;
       this.fee = fee;
+      this.power = 10 ** Number(decimals);
       this.#render();
     } catch (cause) {
       const err = new Error(`token meta:`, { cause });
@@ -82,6 +84,33 @@ class Token {
       await wait(delay)
     }
   }
+
+  clean(n){
+    const res = Number(n) / this.power;
+    return res.toFixed(this.decimals);
+  }
+
+  raw(n) {
+    const res = Number(n) * this.power;
+    return BigInt(res);
+  }
+
+  async approve(amt) {
+    return this.anon.icrc2_allowance({
+      from_subaccount: [],
+      amount: amt + this.fee,
+      spender: {
+        owner: this.vault_id,
+        subaccount: [],
+      },
+      fee: [this.fee],
+      memo: [],
+      created_at_time: [],
+      expected_allowance: [],
+      expires_at: [],
+    })
+  }
+
 }
 
 export default Token;

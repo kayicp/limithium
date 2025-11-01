@@ -41,11 +41,14 @@ class Vault {
 
     try {
       const result = await this.anon.vault_tokens([], []);
+      const vault_id = Principal.fromText(canisterId);
       for (const p of result) {
         this.tokens.set(p, {
-          withdrawal_fee: 0,
-          balance: 0,
-          actor: new Token(p, Principal.fromText(canisterId), this.wallet)
+          amount: '',
+          busy: false,
+          withdrawal_fee: 0n,
+          balance: 0n,
+          ext: new Token(p, vault_id, this.wallet)
         });
       }
       this.#render();
@@ -102,6 +105,69 @@ class Vault {
     }
   }
 
+  async deposit(token_id){
+    const t = this.tokens.get(token_id);
+    const amt = t.ext.raw(t.amount);
+    if (amt == 0n) {
+      const err = new Error(`approve deposit ${amt} ${t.ext.symbol}: amount is zero`);
+      return this.#render(err);
+    }
+
+    t.busy = true;
+    this.#render();
+    try {
+      const res = await t.ext.approve(amt);
+      if ('Err' in res) {
+        const err = new Error(`post approve deposit ${amt} ${t.ext.symbol}: ${res.Err}`);
+        t.busy = false;
+        return this.#render(err);
+      }
+    } catch (cause) {
+      const err = new Error(`approve deposit ${amt} ${t.ext.symbol}`, { cause });
+      t.busy = false;
+      return this.#render(err);
+    }
+
+    try {
+      const res = await this.anon.vault_deposit({
+        subaccount: [],
+        canister_id: token_id,
+        amount: amt,
+        fee: [],
+        memo: [],
+        created_at: [],
+      });
+      t.busy = false;
+      this.#render();
+    } catch (cause) {
+      const err = new Error(`deposit ${amt} ${t.ext.symbol}`, { cause });
+      t.busy = false;
+      return this.#render(err);
+    }
+  }
+
+  async withdraw(token_id) {
+    const t = this.tokens.get(token_id);
+    const amt = t.ext.raw(t.amount);
+    t.busy = true;
+    this.#render();
+    try {
+      const res = await this.anon.vault_deposit({
+        subaccount: [],
+        canister_id: token_id,
+        amount: amt,
+        fee: [],
+        memo: [],
+        created_at: [],
+      });
+      t.busy = false;
+      this.#render();
+    } catch (cause) {
+      const err = new Error(`deposit ${amt} ${t.ext.symbol}`, { cause });
+      t.busy = false;
+      this.#render(err);
+    }
+  }
 }
 
 export default Vault;

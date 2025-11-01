@@ -95,7 +95,7 @@ class Book {
   }
 
   async #initBids() {
-    this.bids = Array.from({ length : 6 }, () => new Price(this.anon, true, this.orders, this.new_oids, this.trades, this.new_tids, wallet));
+    this.bids = Array.from({ length : 6 }, () => new Price(this.anon, true, this.orders, this.new_oids, this.trades, this.new_tids, this.wallet));
 
     let delay = 1000; // start with 1 second
     while (true) {
@@ -121,7 +121,7 @@ class Book {
   async #initUserBuyLevels() {
     let delay = 1000;
     while (true) {
-      const user_p = wallet.get().principal;
+      const user_p = this.wallet.get().principal;
       const account = { owner : user_p, subaccount: [] };
       try {
         const user_buy_lvls = new Map(); 
@@ -154,7 +154,7 @@ class Book {
   async #initUserSellLevels() {
     let delay = 1000;
     while (true) {
-      const user_p = wallet.get().principal;
+      const user_p = this.wallet.get().principal;
       const account = { owner : user_p, subaccount: [] };
       try {
         const user_sell_lvls = new Map(); 
@@ -187,7 +187,7 @@ class Book {
   async #initUserBuyOrders() {
     let delay = 1000;
     while (true) {
-      const user_p = wallet.get().principal;
+      const user_p = this.wallet.get().principal;
       const account = { owner : user_p, subaccount: [] };
       try { // todo: this should be on a separate job
         let has_new = false;
@@ -220,7 +220,7 @@ class Book {
   async #initUserSellOrders() {
     let delay = 1000;
     while (true){
-      const user_p = wallet.get().principal;
+      const user_p = this.wallet.get().principal;
       const account = { owner : user_p, subaccount: [] };
       try { // todo: this should be on a separate job
         let has_new = false;
