@@ -92,11 +92,12 @@ class Token {
 
   raw(n) {
     const res = Number(n) * this.power;
-    return BigInt(res);
+    return BigInt(Math.round(res));
   }
 
   async approve(amt) {
-    return this.anon.icrc2_allowance({
+    const user = await genActor(idlFactory, this.id, this.wallet.get().agent);
+    return user.icrc2_approve({
       from_subaccount: [],
       amount: amt + this.fee,
       spender: {

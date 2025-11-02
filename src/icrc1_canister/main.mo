@@ -227,7 +227,7 @@ shared (install) persistent actor class Canister(
       case _ expiry.max;
     };
     var user = getUser(caller);
-    let sub = Subaccount.get(from.subaccount);
+    var sub = Subaccount.get(from.subaccount);
     var subacc = ICRC1.getSubaccount(user, sub);
     if (subacc.balance < env.fee) return #Err(#InsufficientFunds subacc);
 
@@ -248,8 +248,16 @@ shared (install) persistent actor class Canister(
     };
     spender := ICRC1.saveApproval(spender, spender_sub, arg.amount, expires_at);
     subacc := ICRC1.saveSpender(subacc, arg.spender.owner, spender);
+    subacc := ICRC1.decBalance(subacc, env.fee);
     user := ICRC1.saveSubaccount(user, sub, subacc);
     saveUser(caller, user);
+
+    user := getUser(env.minter.owner);
+    sub := Subaccount.get(env.minter.subaccount);
+    subacc := ICRC1.getSubaccount(user, sub);
+    subacc := ICRC1.incBalance(subacc, env.fee);
+    user := ICRC1.saveSubaccount(user, sub, subacc);
+    saveUser(env.minter.owner, user);
 
     approval_by_expiry := ICRC1.newExpiry(approval_by_expiry, expires_at, caller, sub, arg.spender.owner, spender_sub);
 
@@ -285,10 +293,10 @@ shared (install) persistent actor class Canister(
       case _ ();
     };
     let transfer_and_fee = arg.amount + env.fee;
+
     var user = getUser(arg.from.owner);
     var sub = Subaccount.get(arg.from.subaccount);
     var subacc = ICRC1.getSubaccount(user, sub);
-
     var spender = ICRC1.getSpender(subacc, caller);
     let spender_sub = Subaccount.get(arg.spender_subaccount);
     var approval = ICRC1.getApproval(spender, spender_sub);
@@ -309,7 +317,7 @@ shared (install) persistent actor class Canister(
     subacc := ICRC1.saveSpender(subacc, caller, spender);
     subacc := ICRC1.decBalance(subacc, transfer_and_fee);
     user := ICRC1.saveSubaccount(user, sub, subacc);
-    saveUser(caller, user);
+    saveUser(arg.from.owner, user);
 
     user := getUser(arg.to.owner);
     sub := Subaccount.get(arg.to.subaccount);

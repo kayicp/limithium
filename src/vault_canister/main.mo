@@ -245,7 +245,7 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err(#TransferFailed err);
       case (#Ok ok) ok;
     };
-    let this_canister = Principal.fromActor(Self);
+    let this_canister = Principal.fromActor(Self); // todo: set this to fee collector
     let canister_subaccount = Subaccount.get(null);
     user := Vault.getUser(users, this_canister); // give fee to canister
     subacc := Vault.getSubaccount(user, canister_subaccount);

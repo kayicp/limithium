@@ -23,6 +23,7 @@ class Vault {
 
   #render(err = null) {
     this.err = err;
+    if (err)  console.error(err);
     this.pubsub.emit('render');
   }
 
@@ -44,8 +45,9 @@ class Vault {
       const vault_id = Principal.fromText(canisterId);
       for (const p of result) {
         this.tokens.set(p, {
-          amount: '',
           busy: false,
+          amount: '',
+          operation: 'deposit',
           withdrawal_fee: 0n,
           balance: 0n,
           ext: new Token(p, vault_id, this.wallet)
@@ -108,17 +110,18 @@ class Vault {
   async deposit(token_id){
     const t = this.tokens.get(token_id);
     const amt = t.ext.raw(t.amount);
-    if (amt == 0n) {
+    if (amt == 0n) { // todo: check if lower than withdrawal fee
       const err = new Error(`approve deposit ${amt} ${t.ext.symbol}: amount is zero`);
       return this.#render(err);
     }
 
     t.busy = true;
     this.#render();
+    // todo: if approval is enough, dont approve
     try {
       const res = await t.ext.approve(amt);
       if ('Err' in res) {
-        const err = new Error(`post approve deposit ${amt} ${t.ext.symbol}: ${res.Err}`);
+        const err = new Error(`post approve deposit ${amt} ${t.ext.symbol}: ${JSON.stringify(res.Err)}`);
         t.busy = false;
         return this.#render(err);
       }
@@ -129,7 +132,8 @@ class Vault {
     }
 
     try {
-      const res = await this.anon.vault_deposit({
+      const user = await genActor(idlFactory, canisterId, this.wallet.get().agent);
+      const res = await user.vault_deposit({
         subaccount: [],
         canister_id: token_id,
         amount: amt,
@@ -138,6 +142,11 @@ class Vault {
         created_at: [],
       });
       t.busy = false;
+      if ('Err' in res) {
+        const err = new Error(`post deposit ${amt} ${t.ext.symbol}: ${JSON.stringify(res.Err)}`);
+        return this.#render(err);
+      }
+      t.amount = '0';
       this.#render();
     } catch (cause) {
       const err = new Error(`deposit ${amt} ${t.ext.symbol}`, { cause });
@@ -149,10 +158,16 @@ class Vault {
   async withdraw(token_id) {
     const t = this.tokens.get(token_id);
     const amt = t.ext.raw(t.amount);
+    if (amt == 0n) { // todo: check if lower than withdrawal fee
+      const err = new Error(`withdraw ${amt} ${t.ext.symbol}: amount is zero`);
+      return this.#render(err);
+    }
+
     t.busy = true;
     this.#render();
     try {
-      const res = await this.anon.vault_deposit({
+      const user = await genActor(idlFactory, canisterId, this.wallet.get().agent);
+      const res = await user.vault_withdraw({
         subaccount: [],
         canister_id: token_id,
         amount: amt,
@@ -161,11 +176,16 @@ class Vault {
         created_at: [],
       });
       t.busy = false;
+      if ('Err' in res) {
+        const err = new Error(`post withdraw ${amt} ${t.ext.symbol}: ${JSON.stringify(res.Err)}`);
+        return this.#render(err);
+      }
+      t.amount = '0';
       this.#render();
     } catch (cause) {
-      const err = new Error(`deposit ${amt} ${t.ext.symbol}`, { cause });
+      const err = new Error(`withdraw ${amt} ${t.ext.symbol}`, { cause });
       t.busy = false;
-      this.#render(err);
+      return this.#render(err);
     }
   }
 }

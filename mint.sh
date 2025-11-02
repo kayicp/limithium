@@ -1,4 +1,4 @@
-export RECEIVER="ppbpt-brsgj-7cilp-wiam2-qxxiu-zzgov-epkkt-ecdbx-jww6u-xobtx-jqe"
+export RECEIVER="fynbe-mulml-2ze7s-gah7n-6uf6u-zn7fu-rkxrm-h6yj4-7ol7v-oyi53-xae"
 
 dfx canister call icp_token icrc1_transfer "record {
   from_subaccount = null;

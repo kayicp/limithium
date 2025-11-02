@@ -8,13 +8,14 @@ export default class Balances {
 		this.button = html`
 		<button @click=${(e) => {
 				e.preventDefault();
+				if (window.location.pathname.startsWith(Balances.PATH)) return;
 				this.#render();
 				history.pushState({}, '', Balances.PATH);
 				window.dispatchEvent(new PopStateEvent('popstate'));
 			}}>Balances</button>
 		`;
 
-		this.page = null;
+		this.vault.pubsub.on('render', () => this.#render());
 	}
 
 	#render() {
@@ -31,38 +32,53 @@ export default class Balances {
 		<ul>
 			<li><strong>Balance:</strong> ${t.ext.clean(t.ext.balance)} ${t.ext.symbol}</li>
 			<li><strong>Name:</strong> ${t.ext.name}</li>
-			<li><strong>Approve fee + Transfer fee:</strong> ${t.ext.clean(t.ext.fee * 2n)} ${t.ext.symbol}</li>
+			<li><strong>Approve fee + Transfer fee:</strong> ${t.ext.clean(t.ext.fee + t.ext.fee)} ${t.ext.symbol}</li>
 		</ul>
 	</td>
+
 	<td>
-	<div>
-			<button
-				type="button"
+		<div>
+			<!-- Operation select -->
+			<select
 				?disabled=${t.busy}
-				@click=${() => this.vault.deposit(tid)}
-			>Deposit →</button>
+				.value=${t.operation ?? 'deposit'}
+				@change=${(e) => { t.operation = e.target.value; }}
+			>
+				<option value="deposit" ?selected=${(t.operation ?? 'deposit') === 'deposit'}>Deposit</option>
+				<option value="withdraw" ?selected=${t.operation === 'withdraw'}>Withdraw</option>
+			</select>
+
+			<!-- Amount input: digits + optional one dot, decimals limited to t.ext.decimals -->
 			<input
 				type="text"
 				inputmode="decimal"
-				pattern="\\d+(?:\\.\\d{0,${t.ext.decimals}})?"
+				pattern="\\d+(?:\\.\\d{0,${Number(t.ext.decimals)}})?"
 				placeholder="Amount"
 				.value=${t.amount ?? ''}
 				?disabled=${t.busy}
 				@keydown=${(e) => {
-					// disallow e, E, +, -, multiple decimals etc
+					// disallow e, E, +, - and disallow a second dot
 					if (['e','E','+','-'].includes(e.key)) {
 						e.preventDefault();
+						return;
+					}
+					if (e.key === '.' && e.target.value.includes('.')) {
+						e.preventDefault();
+						return;
 					}
 				}}
 				@input=${(e) => {
 					const input = e.target.value;
-					// strip unwanted chars, allow only digits + optional dot + upto decimals
-					const cleaned = input
-						.replace(/[eE\+\-]/g, '')
-						.replace(/[^0-9\.]/g, '')
-						// ensure only one dot
-						.replace(/\.(?=.*\.)/g, '');
-					// optionally limit decimals after dot
+					// Keep only digits and dots
+					let cleaned = input.replace(/[^0-9.]/g, '');
+
+					// Leave only the first dot (remove any subsequent dots)
+					const firstDot = cleaned.indexOf('.');
+					if (firstDot !== -1) {
+						cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+					}
+
+					// Enforce decimals limit from t.ext.decimals
 					const parts = cleaned.split('.');
 					if (parts[1]?.length > t.ext.decimals) {
 						t.amount = parts[0] + '.' + parts[1].slice(0, t.ext.decimals);
@@ -71,13 +87,23 @@ export default class Balances {
 					}
 				}}
 			>
+
+			<!-- Confirm button triggers deposit or withdraw based on select -->
 			<button
 				type="button"
-				?disabled=${t.busy}
-				@click=${() => this.vault.withdraw(tid)}
-			>← Withdraw</button>
+				?disabled=${t.busy || !t.amount}
+				@click=${() => {
+					if (!t.amount) return;
+					if ((t.operation ?? 'deposit') === 'deposit') {
+						this.vault.deposit(tid);
+					} else {
+						this.vault.withdraw(tid);
+					}
+				}}
+			>Confirm</button>
 		</div>
 	</td>
+
 	<!-- Internal -->
 	<td>
 		<ul>

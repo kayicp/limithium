@@ -37,9 +37,9 @@ function _render() {
   let page = html`<h1>404: Not Found</h1>`;
   if (pathn == "/") {
     page = html`<p>hello world</p>`
-  } else if (pathn.includes(Balances.PATH)) {
+  } else if (pathn.startsWith(Balances.PATH)) {
     page = deposit.page;
-  } else if (pathn.includes(Market.PATH)) {
+  } else if (pathn.startsWith(Market.PATH)) {
     page = market.page;
   }
 

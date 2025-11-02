@@ -102,7 +102,7 @@ class InternetIdentity {
 				this.agent = await HttpAgent.create({ identity });
 				this.principal = await identity.getPrincipal();
 				this.accountid = AccountIdentifier.fromPrincipal({ principal: this.principal }).toHex();
-				console.log('p\n', this.principal.toText(), 'a\n', this.accountid);
+				console.log('p\n', this.principal.toText(), '\na\n', this.accountid);
 				resolve();
 			} catch (err) {
 				reject(err);
