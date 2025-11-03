@@ -8,18 +8,25 @@ export default class Market {
 		this.button = html`
 		<button @click=${(e) => {
 				e.preventDefault();
+				if (window.location.pathname.startsWith(Market.PATH)) return;
 				this.#render();
 				history.pushState({}, '', Market.PATH);
 				window.dispatchEvent(new PopStateEvent('popstate'));
 			}}>Market</button>
 		`;
 
-		this.page = null;
+		this.vault.pubsub.on('render', () => this.#render());
 	}
 
 	#render() {
-		// for ()
-		this.page = html`<div>MARKET</div>`
+		const books = [];
+		for (const [book_id, book] of this.vault.books) {
+			// if (book.)
+			books.push(html`
+	
+			`);
+		}
+		this.page = html`<div></div>`
 	}
 
 }

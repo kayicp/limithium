@@ -113,15 +113,15 @@ export default class Balances {
 		</ul>
 	</td>
 </tr>
-`);
+`); // todo: deposit only show deposit fee, withdraw only show withdraw fee
 		}
 		this.page = html`
 <div>
 	<table border="1" cellspacing="0" cellpadding="6">
 		<tr>
-			<th>External</th>
+			<th>Your Wallet</th>
 			<th></th>
-			<th>Internal</th>
+			<th>Vault</th>
 		</tr>
 		${tokens}
 	</table>
@@ -130,3 +130,5 @@ export default class Balances {
 	}
 
 }
+
+// todo: refresh button to reset all pollers

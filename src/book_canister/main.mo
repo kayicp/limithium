@@ -121,6 +121,19 @@ shared (install) persistent actor class Canister(
   var rewards = RBTree.empty<Nat, (ICRC1T.Enqueue, locked : Bool)>();
   var prev_build = null : ?Nat;
 
+  public shared query func book_base_token_id() : async ?Principal = async Value.metaPrincipal(meta, B.BASE_TOKEN);
+  public shared query func book_quote_token_id() : async ?Principal = async Value.metaPrincipal(meta, B.QUOTE_TOKEN);
+  // todo: add buy/sell maker/taker
+  public shared query func book_maker_fee_numerator() : async Nat = async Value.getNat(meta, B.MAKER_FEE_NUMER, 0);
+  public shared query func book_taker_fee_numerator() : async Nat = async Value.getNat(meta, B.TAKER_FEE_NUMER, 0);
+  public shared query func book_trading_fee_denominator() : async Nat = async Value.getNat(meta, B.TRADING_FEE_DENOM, 0);
+  public shared query func book_min_order_expiry() : async Nat = async Value.getNat(meta, B.MIN_ORDER_EXPIRY, 0);
+  public shared query func book_max_order_expiry() : async Nat = async Value.getNat(meta, B.MAX_ORDER_EXPIRY, 0);
+  public shared query func book_open_fee_quote() : async Nat = async Value.getNat(meta, B.PLACE_FEE_QUOTE, 0);
+  public shared query func book_open_fee_base() : async Nat = async Value.getNat(meta, B.PLACE_FEE_BASE, 0);
+  public shared query func book_close_fee_quote() : async Nat = async Value.getNat(meta, B.CANCEL_FEE_QUOTE, 0);
+  public shared query func book_close_fee_base() : async Nat = async Value.getNat(meta, B.CANCEL_FEE_BASE, 0);
+
   public shared query func book_buy_orders_by(acc : ICRC1T.Account, prev : ?Nat, take : ?Nat) : async [Nat] {
     let subacc = Book.getSubaccount(getUser(acc.owner), Subaccount.get(acc.subaccount));
     let maxt = Value.getNat(meta, B.MAX_TAKE, RBTree.size(subacc.buys));

@@ -16,7 +16,6 @@ function equalMaps(map1, map2) {
   return true;
 }
 
-// todo: maybe we only need "render", and draw html after calls
 class Book {
   wallet = null;
   anon = null;
@@ -54,6 +53,7 @@ class Book {
   async #init() {
     try {
       this.anon = await genActor(idlFactory, this.id);
+      // todo: init meta 
     } catch (cause) {
       const err = new Error(`token meta:`, { cause }); 
       return this.#render(err);
