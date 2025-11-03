@@ -21,6 +21,14 @@ class Book {
   anon = null;
   id = null;
 
+  base_token = null;
+  quote_token = null;
+  maker_numer = null;
+  taker_numer = null;
+  fee_denom = null;
+  close_quote = null;
+  close_base = null;
+
   orders = new Map(); // only best and user's orders
   trades = new Map();
 
@@ -53,7 +61,32 @@ class Book {
   async #init() {
     try {
       this.anon = await genActor(idlFactory, this.id);
-      // todo: init meta 
+      const [
+        base_token, quote_token, maker_numer, taker_numer, 
+        fee_denom, close_quote, close_base
+      ] = await Promise.all([
+        this.anon.book_base_token_id(),
+        this.anon.book_quote_token_id(),
+        this.anon.book_maker_fee_numerator(),
+        this.anon.book_taker_fee_numerator(),
+        this.anon.book_trading_fee_denominator(),
+        this.anon.book_close_fee_quote(),
+        this.anon.book_close_fee_base(),
+      ]);
+      if (!base_token[0]) throw new Error('No base token');
+      if (!quote_token[0]) throw new Error('No quote token');
+      if (maker_numer < 1n) throw new Error('No maker fee');
+      if (taker_numer < 1n) throw new Error('No taker fee');
+      if (fee_denom < 1n) throw new Error('No fee denom');
+      if (close_quote < 1n) throw new Error('No close fee quote');
+      if (close_base < 1n) throw new Error('No close fee base');
+      this.base_token = base_token[0];
+      this.quote_token = quote_token[0];
+      this.maker_numer = maker_numer;
+      this.taker_numer = taker_numer;
+      this.fee_denom = fee_denom;
+      this.close_quote = close_quote;
+      this.close_base = close_base;
     } catch (cause) {
       const err = new Error(`token meta:`, { cause }); 
       return this.#render(err);

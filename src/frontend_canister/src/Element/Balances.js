@@ -44,8 +44,8 @@ export default class Balances {
 				.value=${t.operation ?? 'deposit'}
 				@change=${(e) => { t.operation = e.target.value; }}
 			>
-				<option value="deposit" ?selected=${(t.operation ?? 'deposit') === 'deposit'}>Deposit</option>
-				<option value="withdraw" ?selected=${t.operation === 'withdraw'}>Withdraw</option>
+				<option value="deposit">Deposit</option>
+				<option value="withdraw">Withdraw</option>
 			</select>
 
 			<!-- Amount input: digits + optional one dot, decimals limited to t.ext.decimals -->

@@ -14,19 +14,28 @@ export default class Market {
 				window.dispatchEvent(new PopStateEvent('popstate'));
 			}}>Market</button>
 		`;
-
 		this.vault.pubsub.on('render', () => this.#render());
 	}
 
 	#render() {
-		const books = [];
-		for (const [book_id, book] of this.vault.books) {
-			// if (book.)
-			books.push(html`
-	
-			`);
+		const pair_keys = []; 
+		const pair_options = [];
+		for (const [b_id, b] of this.vault.books) {
+			if (!b.base_token || !b.quote_token) continue;
+			const base_t = this.vault.tokens.get(b.base_token.toText());
+			const quote_t = this.vault.tokens.get(b.quote_token.toText());
+			if (!base_t?.ext?.symbol || !quote_t?.ext?.symbol) continue;
+			const pair = `${base_t.ext.symbol}/${quote_t.ext.symbol}`;
+			if (!this.vault.selected_book && pair.includes('ckBTC')) this.vault.selected_book = b_id;
+			pair_keys.push(pair);
+			pair_options.push(html`<option value="${b_id}" ?selected=${b_id == this.vault.selected_book}>${pair}</option>`);
 		}
-		this.page = html`<div></div>`
-	}
+		if (pair_keys.length == 0) return html`<div>Loading...</div>`; 
 
+		this.page = html`
+<div>
+	<select>${pair_options}</select>
+	
+</div>`
+	}
 }

@@ -13,6 +13,8 @@ class Vault {
   anon = null;
 
   tokens = new Map();
+
+  selected_book = null;
   books = new Map();
 
   constructor(wallet) {
@@ -32,7 +34,7 @@ class Vault {
       this.anon = await genActor(idlFactory, canisterId);
       const result = await this.anon.vault_executors([], []);
       for (const p of result) {
-        this.books.set(p, new Book(p, this.wallet, this.pubsub));
+        this.books.set(p.toText(), new Book(p, this.wallet, this.pubsub));
       }
       this.#render();
     } catch (cause) {
@@ -44,7 +46,7 @@ class Vault {
       const result = await this.anon.vault_tokens([], []);
       const vault_id = Principal.fromText(canisterId);
       for (const p of result) {
-        this.tokens.set(p, {
+        this.tokens.set(p.toText(), {
           busy: false,
           amount: '',
           operation: 'deposit',
@@ -59,19 +61,22 @@ class Vault {
       return this.#render(err);
     }
   
-    const t_ids = [...this.tokens.keys()];
+    const t_ids = [];
+    const t_id_txts = []
+    for (const [t_id, t] of this.tokens) {
+      t_id_txts.push(t_id);
+      t_ids.push(t.ext.id);
+    };
 
     try {
       const withdrawal_fees = await this.anon.vault_withdrawal_fees_of(t_ids);
       
-      const fees = [];
       for (let i = 0; i < t_ids.length; i++) {
-        const token_id = t_ids[i];
+        const t_id_txt = t_id_txts[i];
         const withdrawal_fee = withdrawal_fees[i];
         
         if (withdrawal_fee.length > 0) {
-          this.tokens.get(token_id).withdrawal_fee = withdrawal_fee[0];
-          fees.push({ id: token_id, fee: withdrawal_fee[0] });
+          this.tokens.get(t_id_txt).withdrawal_fee = withdrawal_fee[0];
         }
       }
       this.#render();
@@ -92,7 +97,7 @@ class Vault {
         const bals = await this.anon.vault_unlocked_balances_of(accounts);
   
         for (let i = 0; i < t_ids.length; i++) {
-          const t = this.tokens.get(t_ids[i]);
+          const t = this.tokens.get(t_id_txts[i]);
           if (t.balance != bals[i]) has_new = true;
           t.balance = bals[i];
         }

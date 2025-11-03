@@ -5,6 +5,7 @@ import Vault from './Poller/Vault';
 import Balances from './Element/Balances';
 import Market from './Element/Market';
 import PubSub from '../../util/js/pubsub';
+import { Principal } from '@dfinity/principal';
 
 /*
   6AF4AE green
@@ -14,6 +15,12 @@ import PubSub from '../../util/js/pubsub';
 
 console.log('env.dfx_net', process.env.DFX_NETWORK);
 
+Principal.prototype.toString = function () {
+  return this.toText();
+}
+Principal.prototype.toJSON = function () {
+  return this.toString();
+}
 BigInt.prototype.toJSON = function () {
   return this.toString();
 };
@@ -26,7 +33,7 @@ Uint8Array.prototype.toJSON = function () {
 const pubsub = new PubSub();
 const wallet = new Wallet(pubsub);
 const vault = new Vault(wallet);
-const deposit = new Balances(vault);
+const balances = new Balances(vault);
 const market = new Market(vault);
 
 pubsub.on('render', _render);
@@ -34,23 +41,26 @@ window.addEventListener('popstate', _render);
 
 function _render() {
   const pathn = window.location.pathname;
-  let page = html`<h1>404: Not Found</h1>`;
+  let page = html`<div>404: Not Found</div>`;
   if (pathn == "/") {
-    page = html`<p>hello world</p>`
+    page = html`<div>Landing page here</div>`
   } else if (pathn.startsWith(Balances.PATH)) {
-    page = deposit.page;
+    page = balances.page;
   } else if (pathn.startsWith(Market.PATH)) {
     page = market.page;
   }
 
   const body = html`
-    <div>
+    <header>
+      <button>Home Logo</button>
       ${market.button}
-      ${deposit.button}
+      ${balances.button}
       ${wallet.button}
-    </div>
-    ${page}
-    <div>footer</div>
+    </header>
+    <main>
+      ${page}
+    </main>
+    <footer></footer>
   `;
   render(body, document.getElementById('root'));
 }

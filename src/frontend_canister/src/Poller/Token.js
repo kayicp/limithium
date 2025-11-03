@@ -20,7 +20,6 @@ class Token {
   allowance = 0;
   expires_at = null;
 
-
   constructor(token_id, vault_id, wallet) {
     this.id = token_id;
     this.vault_id = vault_id;
