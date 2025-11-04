@@ -1,4 +1,4 @@
 import App from './App';
-import './index.scss';
+// import './index.scss';
 
 const app = new App();

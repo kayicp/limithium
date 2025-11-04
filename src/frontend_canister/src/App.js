@@ -41,9 +41,9 @@ window.addEventListener('popstate', _render);
 
 function _render() {
   const pathn = window.location.pathname;
-  let page = html`<div>404: Not Found</div>`;
+  let page = html`<div class="text-xs text-slate-400">404: Not Found</div>`;
   if (pathn == "/") {
-    page = html`<div>Landing page here</div>`
+    page = html`<div class="text-sm bg-slate-800/40 rounded-md p-2 ring-1 ring-slate-700">Landing page here</div>`;
   } else if (pathn.startsWith(Balances.PATH)) {
     page = balances.page;
   } else if (pathn.startsWith(Market.PATH)) {
@@ -51,16 +51,36 @@ function _render() {
   }
 
   const body = html`
-    <header>
-      <button>Home Logo</button>
-      ${market.button}
-      ${balances.button}
-      ${wallet.button}
-    </header>
-    <main>
-      ${page}
-    </main>
-    <footer></footer>
+    <div class="min-h-screen flex flex-col">
+      <header class="flex items-center gap-2 p-2 bg-slate-900 border-b border-slate-800 sticky top-0 z-10">
+        <button
+          class="inline-flex items-center px-2 py-1 text-xs rounded-md font-medium bg-slate-800 hover:bg-slate-700 text-slate-100 ring-1 ring-slate-700"
+          @click=${() => { 
+            location.pathname = '/'; 
+            history.pushState({}, '', '/'); 
+            _render(); 
+          }}>
+          Limithium
+        </button>
+
+        <div class="flex items-center gap-2 ml-2">
+          ${market.button}
+          ${balances.button}
+        </div>
+
+        <div class="ml-auto">
+          ${wallet.button}
+        </div>
+      </header>
+
+      <main class="p-3 max-w-6xl mx-auto flex-1">
+        ${page}
+      </main>
+
+      <footer class="p-2 text-xs text-slate-400">
+        © Limithium
+      </footer>
+    </div>
   `;
   render(body, document.getElementById('root'));
 }
