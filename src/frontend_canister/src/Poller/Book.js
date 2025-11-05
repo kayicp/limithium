@@ -43,6 +43,14 @@ class Book {
 
   recents = [];
   new_tids = [];
+
+  form = {
+    busy: false,
+    is_buy: true,
+    price: '',
+    base: '',
+    quote: '',
+  }
   
   constructor(book_id, wallet) {
     this.id = book_id;
@@ -55,6 +63,7 @@ class Book {
 
   #render(err = null) {
     this.err = err;
+    if (err) console.error(err)
     this.pubsub.emit('render');
   }
 
@@ -462,6 +471,95 @@ class Book {
         this.#render(err);
       }
       await wait(delay);
+    }
+  }
+
+  renderOpen(order_id, base_t, quote_t) {
+    const o = this.vault.orders.get(order_id);
+    const price = !o?.price? '—' : quote_t.ext.clean(o.price); 
+    const amount = !o?.base?.initial? '—' : base_t.ext.clean(o.base.initial);
+    const filled = !o?.base?.filled? '—' : base_t.ext.clean(o.base.filled);
+    const timestamp = !o?.created_at? '—' : nano2date(o.created_at);
+    const cancelable = o?.base?.filled && !o?.closed_at;
+    return html`
+    <div class="flex items-center justify-between gap-3 p-2 bg-slate-800/40 ring-1 ring-slate-700 rounded-md text-xs">
+      <div class="min-w-0">
+        <div class="flex items-center gap-2">
+          <div class="text-slate-200 font-semibold truncate">${amount} ${base_t.ext.symbol}</div>
+        </div>
+
+        <div class="mt-1 flex items-center gap-3 text-slate-400 text-xs">
+          <div>Price: <span class="text-slate-200">${price} ${quote_t.ext.symbol}</span></div>
+          <div>Filled: <span class="text-slate-200">${filled}</span></div>
+          <div class="truncate">At: <span class="text-slate-500">${timestamp}</span></div>
+        </div>
+      </div>
+      ${cancelable ? html`
+        <div class="flex-shrink-0">
+          <button
+            class="px-2 py-1 text-xs rounded-md bg-rose-600 hover:bg-rose-500 text-black"
+            ?disabled=${o.close_busy}
+            @click=${() => this.closeOrder(o, base_t, quote_t)}
+            >
+            Cancel
+          </button>
+        </div>
+      ` : html``}
+    </div>
+  `;
+  }
+
+  async openOrder(base_t, quote_t) {
+    console.log('book open');
+    this.form.busy = true;
+    this.#render();
+    try {
+      const user = await genActor(idlFactory, this.id, this.wallet.get().agent);
+      const res = await user.book_open({
+        subaccount: [],
+        orders: [{
+          price: quote_t.ext.raw(this.form.price),
+          amount: base_t.ext.raw(this.form.amount),
+          is_buy: this.form.is_buy,
+          expires_at: [],
+        }],
+        fee : [],
+        memo: [],
+        created_at: [],
+      });
+      this.form.busy = false;
+      if ('Err' in res) {
+        const err = new Error(`post open ${base_t.ext.symbol}/${quote_t.ext.symbol} ${JSON.stringify(this.form)}: ${JSON.stringify(res.Err)}`);
+        return this.#render(err);
+      };
+      this.form.base = '0';
+      this.form.quote = '0';
+    } catch (cause) {
+      this.form.busy = false;
+      const err = new Error(`open ${base_t.ext.symbol}/${quote_t.ext.symbol} ${JSON.stringify(this.form)}`, { cause });
+      return this.#render(err);
+    }
+  }
+
+  async closeOrder(order, base_t, quote_t) {
+    order.close_busy = true;
+    try {
+      const user = await genActor(idlFactory, this.id, this.wallet.get().agent);
+      const res = await user.book_close({
+        subaccount: [],
+        orders: [order.id],
+        fee: [],
+        memo: [],
+      });
+      order.close_busy = false;
+      if ('Err' in res) {
+        const err = new Error(`post close ${base_t.ext.symbol}/${quote_t.ext.symbol} ${order.id}: ${JSON.stringify(res.Err)}`);
+        return this.#render(err);
+      }
+    } catch (cause) {
+      order.close_busy = false;
+      const err = new Error(`close ${base_t.ext.symbol}/${quote_t.ext.symbol} ${order.id}`, { cause });
+      return this.#render(err);
     }
   }
 }

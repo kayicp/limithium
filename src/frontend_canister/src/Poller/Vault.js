@@ -112,8 +112,7 @@ class Vault {
     }
   }
 
-  async deposit(token_id){
-    const t = this.tokens.get(token_id);
+  async deposit(t){
     const amt = t.ext.raw(t.amount);
     if (amt == 0n) { // todo: check if lower than withdrawal fee
       const err = new Error(`approve deposit ${amt} ${t.ext.symbol}: amount is zero`);
@@ -140,7 +139,7 @@ class Vault {
       const user = await genActor(idlFactory, canisterId, this.wallet.get().agent);
       const res = await user.vault_deposit({
         subaccount: [],
-        canister_id: token_id,
+        canister_id: t.ext.id,
         amount: amt,
         fee: [],
         memo: [],
@@ -160,8 +159,7 @@ class Vault {
     }
   }
 
-  async withdraw(token_id) {
-    const t = this.tokens.get(token_id);
+  async withdraw(t) {
     const amt = t.ext.raw(t.amount);
     if (amt == 0n) { // todo: check if lower than withdrawal fee
       const err = new Error(`withdraw ${amt} ${t.ext.symbol}: amount is zero`);
@@ -174,7 +172,7 @@ class Vault {
       const user = await genActor(idlFactory, canisterId, this.wallet.get().agent);
       const res = await user.vault_withdraw({
         subaccount: [],
-        canister_id: token_id,
+        canister_id: t.ext.id,
         amount: amt,
         fee: [],
         memo: [],

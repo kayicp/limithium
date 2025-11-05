@@ -1,4 +1,4 @@
-export RECEIVER="fynbe-mulml-2ze7s-gah7n-6uf6u-zn7fu-rkxrm-h6yj4-7ol7v-oyi53-xae"
+export RECEIVER="3c5hn-zbjst-c4p7o-ca7hi-jjmhh-p6nrb-lcf3d-j4gng-qsl4l-zuoug-yqe"
 
 dfx canister call icp_token icrc1_transfer "record {
   from_subaccount = null;

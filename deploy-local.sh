@@ -1,3 +1,5 @@
+# npx @tailwindcss/cli -i ./src/frontend_canister/src/index.scss -o ./src/frontend_canister/src/output.css --watch
+
 clear
 # mops test
 

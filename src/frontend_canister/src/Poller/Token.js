@@ -30,6 +30,7 @@ class Token {
 
   #render(err = null) {
     this.err = err;
+    if (err) console.error(err)
     this.pubsub.emit('render');
   }
 

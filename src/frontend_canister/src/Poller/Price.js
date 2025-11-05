@@ -12,7 +12,7 @@ function setsEqual(set1, set2) {
 
 
 class Price {
-	level = 0;
+	level = 0n;
 
 	oids = new Set();
 	base = new Amount();
@@ -33,6 +33,7 @@ class Price {
 
 	#render(err = null) {
 		this.err = err;
+		if (err) console.error(err)
 		this.pubsub.emit('render');
 	}
 

@@ -91,15 +91,12 @@ for (const [tid, t] of this.vault.tokens) {
             @click=${() => {
               if (!t.amount) return;
               if ((t.operation ?? 'deposit') === 'deposit') {
-                this.vault.deposit(tid);
+                this.vault.deposit(t);
               } else {
-                this.vault.withdraw(tid);
+                this.vault.withdraw(t);
               }
             }}
           >Confirm</button>
-
-          <!-- Busy indicator -->
-          ${t.busy ? html`<div class="text-xs text-slate-400">Working…</div>` : html``}
         </div>
       </div>
 

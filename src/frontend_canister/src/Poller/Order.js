@@ -16,6 +16,7 @@ class Order {
 	tids = [];
 
 	err = null;
+	close_busy = false;
 
 	constructor(id, book_anon, trades, new_tids, wallet) {
 		this.id = id;
@@ -29,6 +30,7 @@ class Order {
 
 	#render(err = null) {
 		this.err = err;
+		if (err) console.error(err)
 		this.pubsub.emit('render');
 	}
 
