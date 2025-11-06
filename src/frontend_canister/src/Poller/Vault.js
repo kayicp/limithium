@@ -23,6 +23,11 @@ class Vault {
     this.#init();
   }
 
+  #refresh() {
+    this.pubsub.emit('refresh');
+    this.#render();
+  }
+
   #render(err = null) {
     this.err = err;
     if (err)  console.error(err);
@@ -108,7 +113,8 @@ class Vault {
         const err = new Error('get unlocked_balances:', { cause });
         this.#render(err);
       }
-      await wait(delay)
+
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
   }
 
@@ -151,7 +157,7 @@ class Vault {
         return this.#render(err);
       }
       t.amount = '0';
-      this.#render();
+      this.#refresh();
     } catch (cause) {
       const err = new Error(`deposit ${amt} ${t.ext.symbol}`, { cause });
       t.busy = false;
@@ -184,7 +190,7 @@ class Vault {
         return this.#render(err);
       }
       t.amount = '0';
-      this.#render();
+      this.#refresh();
     } catch (cause) {
       const err = new Error(`withdraw ${amt} ${t.ext.symbol}`, { cause });
       t.busy = false;

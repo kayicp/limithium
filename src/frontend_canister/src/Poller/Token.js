@@ -81,7 +81,7 @@ class Token {
         const err = new Error('token balance', { cause });
         this.#render(err);
       };
-      await wait(delay)
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
   }
 

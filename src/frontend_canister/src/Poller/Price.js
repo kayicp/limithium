@@ -73,7 +73,7 @@ class Price {
         	this.#render(err);
 				}
 			} else delay = retry(false, delay);
-			await wait(delay);
+			if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
 		}
 	}
 

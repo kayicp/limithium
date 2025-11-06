@@ -91,14 +91,14 @@ export default class Market {
 			pair_keys.push(pair);
 			pair_options.push(html`<option class="bg-slate-800 text-slate-100 text-xs" value="${b_id}" ?selected=${b_id == this.vault.selected_book}>${pair}</option>`);
 		}
-		if (pair_keys.length == 0) {
+		if (pair_keys.length < 1 || !this.vault.selected_book) {
 			this.page = html`<div class="text-xs text-slate-400">Loading...</div>`;
 		} else {
 			const book = this.vault.books.get(this.vault.selected_book);
 			const base_t = this.vault.tokens.get(book.base_token.toText());
 			const quote_t = this.vault.tokens.get(book.quote_token.toText());
 			let last_trade_price = null;
-			const live_trades = book.recents.map(trade_id => {
+			const recent_trades = book.recents.map(trade_id => {
 				if (!trade_id) return html`<div class="text-xs text-slate-500">—</div>`;
 				const t = book.trades.get(trade_id);
 				if (!t) return html`<div class="text-xs text-slate-500">—</div>`;
@@ -122,25 +122,33 @@ export default class Market {
 				const amount = base_t.ext.clean(price.base.initial - price.base.filled - price.base.locked);
 				return html`
 <div class="flex justify-between items-center text-xs text-slate-300">
-	<div class="text-slate-400">${price_lvl}</div>
-	<div class="font-medium text-rose-400">${amount}</div>
+	<div class="font-medium text-rose-400">${price_lvl }</div>
+	<div class="text-slate-400">${amount}</div>
 </div>`;
-			});
+			}).reverse();
 			const bids = book.bids.map(price => {
 				if (price.level == 0n) return html`<div class="text-xs text-slate-500">—</div>`;
 				const price_lvl = quote_t.ext.clean(price.level);
 				const amount = base_t.ext.clean(price.base.initial - price.base.filled - price.base.locked);
 				return html`
 <div class="flex justify-between items-center text-xs text-slate-300">
-	<div class="font-medium text-emerald-400">${amount}</div>
-	<div class="text-slate-400">${price_lvl}</div>
+	<div class="font-medium text-emerald-400">${price_lvl }</div>
+	<div class="text-slate-400">${amount}</div>
 </div>`;
 			});
 
 			let opened_orders = html`<div class="text-slate-400">Connect your wallet to see your orders</div>`;
 			if (this.vault.wallet.get().principal) {
-				const my_buys = book.user_buys.length > 0? book.user_buys.map(order_id => book.renderOpen(order_id, base_t, quote_t)) : html`<div class="text-xs text-slate-400">No buy orders</div>`;
-				const my_sells = book.user_sells.length > 0? book.user_sells.map(order_id => book.renderOpen(order_id, base_t, quote_t)) : html`<div class="text-xs text-slate-500">No sell orders</div>`;
+				const my_buys = book.user_buy_lvls.size
+				? [...book.user_buy_lvls.entries()]
+						.map(([, value]) => book.renderOpen(value, base_t, quote_t))
+				: html`<div class="text-xs text-slate-500">No buy orders</div>`;
+
+				const my_sells = book.user_sell_lvls.size
+				? [...book.user_sell_lvls.entries()]
+						.map(([, value]) => book.renderOpen(value, base_t, quote_t))
+				: html`<div class="text-xs text-slate-500">No sell orders</div>`;
+
 				opened_orders = html`
 				<div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
 					<div>
@@ -169,11 +177,11 @@ export default class Market {
 							${pair_options}
 						</select>
 					</div>
-					<!-- main grid: left live trades | middle orderbook | right order form -->
+					<!-- main grid: left recent trades | middle orderbook | right order form -->
 					<div class="grid grid-cols-1 md:grid-cols-12 gap-3">
 						<div class="md:col-span-3 bg-slate-800/30 ring-1 ring-slate-700 rounded-md p-2 text-xs min-h-0 min-w-0">
-							<div class="font-medium text-slate-300 mb-2">Live Trades</div>
-							<div class="flex flex-col gap-1 max-h-72 overflow-y-auto pr-1">${live_trades}</div>
+							<div class="font-medium text-slate-300 mb-2">Recent Trades</div>
+							<div class="flex flex-col gap-1 max-h-72 overflow-y-auto pr-1">${recent_trades}</div>
 						</div>
 						<div class="md:col-span-6 bg-slate-800/30 ring-1 ring-slate-700 rounded-md p-2 text-xs min-h-0 min-w-0">
 							<div class="grid grid-cols-1 gap-2">

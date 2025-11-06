@@ -1,4 +1,4 @@
-export RECEIVER="3c5hn-zbjst-c4p7o-ca7hi-jjmhh-p6nrb-lcf3d-j4gng-qsl4l-zuoug-yqe"
+export RECEIVER="wugvx-hjbks-lxx3y-3yki4-xqa54-abixp-hhx7z-tkt2h-ziahx-woh6d-xqe"
 
 dfx canister call icp_token icrc1_transfer "record {
   from_subaccount = null;

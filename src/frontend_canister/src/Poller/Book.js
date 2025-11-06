@@ -4,6 +4,8 @@ import Order from './Order';
 import Trade from './Trade';
 import { wait, retry } from '../../../util/js/wait';
 import { genActor } from '../../../util/js/actor';
+import { nano2date } from '../../../util/js/bigint';
+import { html } from 'lit-html';
 
 function equalMaps(map1, map2) {
   if (map1.size !== map2.size) return false;
@@ -33,7 +35,9 @@ class Book {
   trades = new Map();
 
   user_buys = [];
+  user_buys_lookup = new Set();
   user_sells = [];
+  user_sells_lookup = new Set();
   user_buy_lvls = new Map();
   user_sell_lvls = new Map();
 
@@ -59,6 +63,11 @@ class Book {
 
     this.recents = Array.from({ length : 12 }, () => null);
     this.#init();
+  }
+
+  #refresh() {
+    this.pubsub.emit('refresh');
+    this.#render();
   }
 
   #render(err = null) {
@@ -118,12 +127,14 @@ class Book {
     let delay = 1000; // start with 1 second
     while (true) {
       try {
-        has_change = false;
+        let has_change = false;
         const prices = await this.anon.book_ask_prices([], [this.asks.length]);
         for (let i = 0; i < this.asks.length; i++) {
           const price = prices[i] ?? 0n;
-          if (price != this.asks[i].level) has_change = true;
-          this.asks[i].changeLevel(price);
+          if (price != this.asks[i].level) {
+            has_change = true;
+            this.asks[i].changeLevel(price);
+          };
         }
         if (has_change) this.#render();
         delay = retry(has_change, delay);
@@ -132,7 +143,7 @@ class Book {
         const err = new Error('ask prices:', { cause });
         this.#render(err);
       }
-      await wait(delay);
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
   }
 
@@ -142,12 +153,14 @@ class Book {
     let delay = 1000; // start with 1 second
     while (true) {
       try {
-        has_change = false;
+        let has_change = false;
         const prices = await this.anon.book_bid_prices([], [this.bids.length]);
         for (let i = 0; i < this.bids.length; i++) {
           const price = prices[i] ?? 0n;
-          if (price != this.bids[i].level) has_change = true;
-          this.bids[i].changeLevel(price);
+          if (price != this.bids[i].level) {
+            has_change = true;
+            this.bids[i].changeLevel(price);
+          };
         }
         if (has_change) this.#render();
         delay = retry(has_change, delay);
@@ -156,7 +169,7 @@ class Book {
         const err = new Error('bid prices:', { cause });
         this.#render(err);
       }
-      await wait(delay);
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
   }
 
@@ -167,11 +180,15 @@ class Book {
       const account = { owner : user_p, subaccount: [] };
       try {
         const user_buy_lvls = new Map(); 
-        while (user_p != null) {
-          let prev = [];
+        let prev = [];
+        while (true) if (!user_p) {
+          this.user_buy_lvls.clear();
+          break;
+        } else {
           const buy_lvls = await this.anon.book_buy_prices_by(account, prev, []);
           if (buy_lvls.length == 0) break;
           for (const [lvl, oid] of buy_lvls) {
+            prev = [lvl];
             user_buy_lvls.set(lvl, oid);
             const o = this.orders.get(oid);
             if (!o) {
@@ -181,15 +198,15 @@ class Book {
           }
         }
         const has_change = !equalMaps(this.user_buy_lvls, user_buy_lvls);
-        this.user_buy_lvls = user_buy_lvls;
-        if (has_change) this.#render();
         delay = retry(has_change, delay);
+        this.user_buy_lvls = user_buy_lvls;
+        this.#render();
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error(`user's buy levels:`, { cause });
         this.#render(err);
       }
-      await wait(delay);
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
   }
 
@@ -200,11 +217,15 @@ class Book {
       const account = { owner : user_p, subaccount: [] };
       try {
         const user_sell_lvls = new Map(); 
-        while (user_p != null) {
-          let prev = [];
+        let prev = [];
+        while (true) if (!user_p) {
+          this.user_sell_lvls.clear();
+          break;
+        } else {
           const sell_lvls = await this.anon.book_sell_prices_by(account, prev, []);
           if (sell_lvls.length == 0) break;
           for (const [lvl, oid] of sell_lvls) {
+            prev = [lvl];
             user_sell_lvls.set(lvl, oid);
             const o = this.orders.get(oid);
             if (!o) {
@@ -216,13 +237,13 @@ class Book {
         const has_change = !equalMaps(this.user_sell_lvls, user_sell_lvls);
         delay = retry(has_change, delay);
         this.user_sell_lvls = user_sell_lvls;
-        if (has_change) this.#render();
+        this.#render();
       } catch (cause) {
         delay = retry(false, delay);
         const err = new Error("user's sell levels", { cause });
         this.#render(err);
       }
-      await wait(delay);
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
   }
 
@@ -231,9 +252,13 @@ class Book {
     while (true) {
       const user_p = this.wallet.get().principal;
       const account = { owner : user_p, subaccount: [] };
-      try { // todo: this should be on a separate job
+      try {
         let has_new = false;
-        while (user_p != null) {
+        while (true) if (!user_p) {
+          this.user_buys_lookup.clear();
+          this.user_buys = [];
+          break;
+        } else {
           const prev = this.user_buys.length > 0? [this.user_buys[this.user_buys.length - 1]] : [];
           const buys = await this.anon.book_buy_orders_by(account, prev, []);
           if (buys.length == 0) break;
@@ -243,8 +268,11 @@ class Book {
             if (!o) {
               this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids, this.wallet));
               this.new_oids.push(oid);
+            };
+            if (!this.user_buys_lookup.has(oid)) {
+              this.user_buys_lookup.add(oid);
               this.user_buys.push(oid);
-            } else break;
+            }
           }
         }
         delay = retry(has_new, delay);
@@ -254,7 +282,7 @@ class Book {
         const err = new Error("user's buys", { cause });
         this.#render(err);
       }
-      await wait(delay);
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     };
 
   }
@@ -264,9 +292,13 @@ class Book {
     while (true){
       const user_p = this.wallet.get().principal;
       const account = { owner : user_p, subaccount: [] };
-      try { // todo: this should be on a separate job
+      try {
         let has_new = false;
-        while (user_p != null) {
+        while (true) if (!user_p) {
+          this.user_sells_lookup.clear();
+          this.user_sells = [];
+          break;
+        } else {
           const prev = this.user_sells.length > 0? [this.user_sells[this.user_sells.length - 1]] : [];
           const sells = await this.anon.book_sell_orders_by(account, prev, []);
           if (sells.length == 0) break;
@@ -276,6 +308,9 @@ class Book {
             if (!o) {
               this.orders.set(oid, new Order(oid, this.anon, this.trades, this.new_tids, this.wallet));
               this.new_oids.push(oid);
+            }
+            if (!this.user_sells_lookup.has(oid)) {
+              this.user_sells_lookup.add(oid);
               this.user_sells.push(oid);
             }
           }
@@ -287,7 +322,7 @@ class Book {
         const err = new Error("user's sells", { cause });
         this.#render(err);
       }
-      await wait(delay);
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
   }
 
@@ -337,7 +372,7 @@ class Book {
         const err = new Error("get orders", { cause });
         this.#render(err);
       }
-      await wait(delay);
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
   }
 
@@ -351,7 +386,8 @@ class Book {
           const tid = tids[i];
           if (tid != this.recents[i]) has_change = true;
           this.recents[i] = tid;
-
+          
+          if (!tid) continue;
           const t = this.trades.get(tid);
           if (!t) {
             this.trades.set(tid, new Trade(tid));
@@ -365,7 +401,7 @@ class Book {
         const err = new Error("recent trades", { cause });
         this.#render(err);
       }
-      await wait(delay);
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     };
   }
 
@@ -427,7 +463,7 @@ class Book {
         const err = new Error("get trades", { cause });
         this.#render(err);
       }
-      await wait(delay);
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     };
   }
 
@@ -470,12 +506,12 @@ class Book {
         const err = new Error("update orders", { cause });
         this.#render(err);
       }
-      await wait(delay);
+      if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
   }
 
   renderOpen(order_id, base_t, quote_t) {
-    const o = this.vault.orders.get(order_id);
+    const o = this.orders.get(order_id);
     const price = !o?.price? '—' : quote_t.ext.clean(o.price); 
     const amount = !o?.base?.initial? '—' : base_t.ext.clean(o.base.initial);
     const filled = !o?.base?.filled? '—' : base_t.ext.clean(o.base.filled);
@@ -489,8 +525,8 @@ class Book {
         </div>
 
         <div class="mt-1 flex items-center gap-3 text-slate-400 text-xs">
-          <div>Price: <span class="text-slate-200">${price} ${quote_t.ext.symbol}</span></div>
-          <div>Filled: <span class="text-slate-200">${filled}</span></div>
+          <div>Price (${quote_t.ext.symbol}): <span class="text-slate-200">${price}</span></div>
+          <div>Filled (${base_t.ext.symbol}):<span class="text-slate-200">${filled}</span></div>
           <div class="truncate">At: <span class="text-slate-500">${timestamp}</span></div>
         </div>
       </div>
@@ -510,7 +546,6 @@ class Book {
   }
 
   async openOrder(base_t, quote_t) {
-    console.log('book open');
     this.form.busy = true;
     this.#render();
     try {
@@ -519,7 +554,7 @@ class Book {
         subaccount: [],
         orders: [{
           price: quote_t.ext.raw(this.form.price),
-          amount: base_t.ext.raw(this.form.amount),
+          amount: base_t.ext.raw(this.form.base),
           is_buy: this.form.is_buy,
           expires_at: [],
         }],
@@ -534,6 +569,7 @@ class Book {
       };
       this.form.base = '0';
       this.form.quote = '0';
+      this.#refresh();
     } catch (cause) {
       this.form.busy = false;
       const err = new Error(`open ${base_t.ext.symbol}/${quote_t.ext.symbol} ${JSON.stringify(this.form)}`, { cause });
@@ -556,6 +592,7 @@ class Book {
         const err = new Error(`post close ${base_t.ext.symbol}/${quote_t.ext.symbol} ${order.id}: ${JSON.stringify(res.Err)}`);
         return this.#render(err);
       }
+      this.#refresh();
     } catch (cause) {
       order.close_busy = false;
       const err = new Error(`close ${base_t.ext.symbol}/${quote_t.ext.symbol} ${order.id}`, { cause });
@@ -565,5 +602,3 @@ class Book {
 }
 
 export default Book;
-
-// todo: get user's orders

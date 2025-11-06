@@ -57,7 +57,7 @@ class Order {
 				const err = new Error('order trades:', { cause });
 				this.#render(err);
 			}
-			await wait(delay);
+			if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
 		}
 	}
 

@@ -103,6 +103,7 @@ class InternetIdentity {
 				this.principal = await identity.getPrincipal();
 				this.accountid = AccountIdentifier.fromPrincipal({ principal: this.principal }).toHex();
 				console.log('p\n', this.principal.toText(), '\na\n', this.accountid);
+				this.pubsub.emit('refresh');
 				resolve();
 			} catch (err) {
 				reject(err);

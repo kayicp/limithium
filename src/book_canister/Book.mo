@@ -96,21 +96,6 @@ module {
     let upper = lower + tick;
     if (n - lower <= upper - n) lower else upper;
   };
-  public func incAmount(a : B.Amount, b : B.Amount) : B.Amount = {
-    initial = a.initial + b.initial;
-    filled = a.filled + b.filled;
-    locked = a.locked + b.locked;
-  };
-  public func decAmount(a : B.Amount, b : B.Amount) : B.Amount = {
-    initial = if (a.initial > b.initial) a.initial - b.initial else 0;
-    filled = if (a.filled > b.filled) a.filled - b.filled else 0;
-    locked = if (a.locked > b.locked) a.locked - b.locked else 0;
-  };
-  public func mulAmount(a : B.Amount, b : Nat) : B.Amount = {
-    initial = a.initial * b;
-    filled = a.filled * b;
-    locked = a.locked * b;
-  };
   public func lockAmount(a : B.Amount, b : Nat) : B.Amount = {
     a with locked = a.locked + b
   };
@@ -361,7 +346,9 @@ module {
       meta;
       vault;
       base_token_id;
+      base_power;
       quote_token_id;
+      quote_power;
       fee_denom;
       maker_fee_numer;
       taker_fee_numer;

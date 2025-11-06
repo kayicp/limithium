@@ -182,7 +182,9 @@ module {
     meta : Value.Metadata;
     vault : Vault.Canister;
     base_token_id : Principal;
+    base_power : Nat;
     quote_token_id : Principal;
+    quote_power : Nat;
     fee_denom : Nat;
     maker_fee_numer : Nat;
     taker_fee_numer : Nat;
