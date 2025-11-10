@@ -26,5 +26,4 @@ dist/
 
 package-lock.json
 src/util/motoko
-src/archive_canister
 .mops

@@ -513,10 +513,10 @@ class Book {
   renderOpen(order_id, base_t, quote_t) {
     const o = this.orders.get(order_id);
     const price = !o?.price? '—' : quote_t.ext.clean(o.price); 
-    const amount = !o?.base?.initial? '—' : base_t.ext.clean(o.base.initial);
-    const filled = !o?.base?.filled? '—' : base_t.ext.clean(o.base.filled);
+    const amount = !o?.price? '—' : base_t.ext.clean(o.base.initial);
+    const filled = !o?.price? '—' : base_t.ext.clean(o.base.filled);
     const timestamp = !o?.created_at? '—' : nano2date(o.created_at);
-    const cancelable = o?.base?.filled && !o?.closed_at;
+    const cancelable = o?.price && !o?.closed_at;
     return html`
     <div class="flex items-center justify-between gap-3 p-2 bg-slate-800/40 ring-1 ring-slate-700 rounded-md text-xs">
       <div class="min-w-0">
@@ -533,12 +533,10 @@ class Book {
       ${cancelable ? html`
         <div class="flex-shrink-0">
           <button
-            class="px-2 py-1 text-xs rounded-md bg-rose-600 hover:bg-rose-500 text-black"
+            class="px-2 py-1 text-xs rounded-md bg-slate-600 hover:bg-slate-500 text-white disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
             ?disabled=${o.close_busy}
             @click=${() => this.closeOrder(o, base_t, quote_t)}
-            >
-            Cancel
-          </button>
+          >Cancel</button>
         </div>
       ` : html``}
     </div>

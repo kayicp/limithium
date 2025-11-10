@@ -77,6 +77,7 @@ class Price {
 		}
 	}
 
+	// todo: redesign the whole Price.js as it makes the ui ugly everytime it change the level
 	changeLevel(lvl = 0n) {
 		this.level = lvl;
 		this.oids = new Set();

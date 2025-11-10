@@ -1,13 +1,14 @@
 import B "Types";
 import Book "Book";
 import V "../vault_canister/Types";
-import A "../archive_canister/Types";
-import Archive "../archive_canister/main";
-import ArchiveL "../archive_canister/Archive";
+import A "../util/motoko/Archive/Types";
+import Archive "../util/motoko/Archive/Canister";
+import ArchiveL "../util/motoko/Archive";
 import ICRC1T "../icrc1_canister/Types";
 import ICRC1L "../icrc1_canister/ICRC1";
 import RewardToken "../icrc1_canister/main";
 import ICRC3T "../util/motoko/ICRC-3/Types";
+import ICRC3L "../util/motoko/ICRC-3";
 import Value "../util/motoko/Value";
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Error "../util/motoko/Error";
@@ -1720,4 +1721,6 @@ shared (install) persistent actor class Canister(
 
   public shared query func rb_archive_min_block() : async ?Nat = async RBTree.minKey(blocks);
   public shared query func rb_archive_max_update_batch_size() : async ?Nat = async Value.metaNat(meta, A.MAX_UPDATE_BATCH_SIZE);
+
+  public shared query func icrc3_get_blocks(gets : [ICRC3T.GetBlocksArg]) : async ICRC3T.GetBlocksResult = async ICRC3L.getBlocks(gets, blox, metadata);
 };
