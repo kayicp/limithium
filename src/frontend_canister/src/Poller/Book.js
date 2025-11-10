@@ -440,7 +440,11 @@ class Book {
               timestamps[i], blocks[i]
             ];
             const tid = this.new_tids[i];
-            const t = this.trades.get(tid);
+            let t = this.trades.get(tid);
+            if (!t) {
+              t = new Trade(tid);
+              this.trades.set(tid, t);
+            }
             t.sell_id = sell_id[0];
             t.sell_base = sell_base[0];
             t.sell_fee_quote = sell_fee_quote[0];
@@ -517,6 +521,7 @@ class Book {
     const filled = !o?.price? '—' : base_t.ext.clean(o.base.filled);
     const timestamp = !o?.created_at? '—' : nano2date(o.created_at);
     const cancelable = o?.price && !o?.closed_at;
+
     return html`
     <div class="flex items-center justify-between gap-3 p-2 bg-slate-800/40 ring-1 ring-slate-700 rounded-md text-xs">
       <div class="min-w-0">
@@ -530,6 +535,13 @@ class Book {
           <div class="truncate">At: <span class="text-slate-500">${timestamp}</span></div>
         </div>
       </div>
+      ${o?.tids?.length ? html`
+        <div class="flex-shrink-0">
+          <button
+            class="px-2 py-1 text-xs rounded-md bg-slate-600 hover:bg-slate-500 text-white"
+            @click=${() => o.show(base_t, quote_t)}
+          >${o.trades_ui.length? 'Hide Trades' : 'Show Trades'}</button>
+        </div>` : html``}
       ${cancelable ? html`
         <div class="flex-shrink-0">
           <button
@@ -537,9 +549,13 @@ class Book {
             ?disabled=${o.close_busy}
             @click=${() => this.closeOrder(o, base_t, quote_t)}
           >Cancel</button>
-        </div>
-      ` : html``}
+        </div>` : html``}
     </div>
+    ${o?.trades_ui.length? html`
+      <div class="mt-2 space-y-2 pl-2">
+        ${o.trades_ui}
+      </div>` 
+      : html``}
   `;
   }
 

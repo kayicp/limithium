@@ -1594,7 +1594,6 @@ shared (install) persistent actor class Canister(
           case (#Ok ok) ok;
         };
         unlockMatch();
-        saveMatch();
 
         let maker_reward = Nat.max(amt_q / env.min_quote_amount, 1);
         if (sell_maker) newReward(sell_o.owner, sell_s, maker_reward) else newReward(buy_o.owner, buy_s, maker_reward);
@@ -1624,6 +1623,8 @@ shared (install) persistent actor class Canister(
         };
         sell_o := Book.fillOrder(sell_o, amt, trade_id);
         buy_o := Book.fillOrder(buy_o, amt, trade_id);
+        saveMatch();
+
         trades := RBTree.insert(trades, Nat.compare, trade_id, trade);
         let val = Book.valueTrade(trade_id, env.now, phash, sell_h, buy_h);
         newBlock(block_id, val);
@@ -1722,5 +1723,5 @@ shared (install) persistent actor class Canister(
   public shared query func rb_archive_min_block() : async ?Nat = async RBTree.minKey(blocks);
   public shared query func rb_archive_max_update_batch_size() : async ?Nat = async Value.metaNat(meta, A.MAX_UPDATE_BATCH_SIZE);
 
-  public shared query func icrc3_get_blocks(gets : [ICRC3T.GetBlocksArg]) : async ICRC3T.GetBlocksResult = async ICRC3L.getBlocks(gets, blox, metadata);
+  public shared query func icrc3_get_blocks(gets : [ICRC3T.GetBlocksArg]) : async ICRC3T.GetBlocksResult = async ICRC3L.getBlocks(gets, blocks, Value.metaPrincipal(meta, A.ROOT));
 };
