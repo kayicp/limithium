@@ -19,6 +19,7 @@ class Order {
 
 	err = null;
 	close_busy = false;
+	show_trades = false;
 	trades_ui = [];
 
 	constructor(id, book_anon, trades, new_tids, wallet) {
@@ -64,8 +65,13 @@ class Order {
 		}
 	}
 
-	show(base_t, quote_t) {
-		this.trades_ui = this.trades_ui.length ? [] : this.tids.map(t_id => {
+	showTrades() {
+		this.show_trades = !this.show_trades;
+		this.#render();
+	}
+
+	drawTrades(base_t, quote_t) {
+		return this.tids.map(t_id => {
 			const t = this.trades.get(t_id);
 			let role = '—';
 			if (t?.sell_id != null || t?.buy_id != null) {
@@ -78,7 +84,7 @@ class Order {
 			const side = this.is_buy == null? '—' : this.is_buy? 'Buy' : 'Sell';
 			const t_base = t?.sell_base? base_t.ext.clean(t.sell_base) : '—';
 			const t_quote = t?.buy_quote? quote_t.ext.clean(t.buy_quote) : '—';
-			const t_price = t_base == '—' && t_quote == '—'? '—' : Number(t.buy_quote) / Number(t.sell_base);
+			const t_price = t_base == '—' && t_quote == '—'? '—' : quote_t.ext.price(t.buy_quote, t.sell_base);
 			let fee_symbol = '—';
 			let fee_amt = '—';
 			if (side == 'Buy' && t?.buy_fee_base) {
@@ -105,7 +111,6 @@ class Order {
 				</div>
 			</div>`
 		});
-		this.#render();
 	}
 
 }

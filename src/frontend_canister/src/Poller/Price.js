@@ -10,9 +10,9 @@ function setsEqual(set1, set2) {
   return true;
 }
 
-
 class Price {
-	level = 0n;
+	curr_level = 0n;
+	next_level = 0n;
 
 	oids = new Set();
 	base = new Amount();
@@ -41,13 +41,14 @@ class Price {
 		const orders_at = is_buy? this.book_anon.book_bids_at : this.book_anon.book_asks_at;
 		let delay = 1000;
 		while (true) {
-			if (this.level > 0n) {
+			const level = this.next_level || this.curr_level;
+			if (level > 0n) {
 				let prev = [];
 				const _oids = new Set();
 				const _base = new Amount();
 				try {
 					getting: while (true) {
-						const oids = await orders_at(this.level, prev, []);
+						const oids = await orders_at(level, prev, []);
 						if (oids.length == 0) break getting;
 						prev = [oids[oids.length - 1]];
 						for (const oid of oids) {
@@ -65,23 +66,27 @@ class Price {
 					delay = retry(has_change, delay);
 					this.oids = _oids;
 					this.base = _base;
-					if (this.oids.size == 0) this.changeLevel(0n);
+					this.curr_level = level;
 					if (has_change) this.#render();
 				} catch (cause) {
 					delay = retry(false, delay);
 					const err = new Error(`price oids:`, { cause });
         	this.#render(err);
 				}
-			} else delay = retry(false, delay);
+			} else {
+				delay = retry(true, delay);
+				this.oids = new Set();
+				this.base = new Amount();
+				this.curr_level = 0n;
+				this.next_level = 0n;
+			};
 			if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
 		}
 	}
 
-	// todo: redesign the whole Price.js as it makes the ui ugly everytime it change the level
 	changeLevel(lvl = 0n) {
-		this.level = lvl;
-		this.oids = new Set();
-		this.base = new Amount();
+		this.next_level = lvl;
+		if (lvl == 0n) this.curr_level = lvl;
 	}
 }
 

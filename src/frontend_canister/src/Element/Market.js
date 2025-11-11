@@ -1,5 +1,6 @@
 import { html } from 'lit-html';
 import { nano2date } from '../../../util/js/bigint';
+import Book from '../Poller/Book';
 
 export default class Market {
 	static PATH = '/market';
@@ -98,14 +99,14 @@ export default class Market {
 			const base_t = this.vault.tokens.get(book.base_token.toText());
 			const quote_t = this.vault.tokens.get(book.quote_token.toText());
 			let last_trade_price = null;
-			const recent_trades = book.recents.map(trade_id => {
-				if (!trade_id) return html`<div class="text-xs text-slate-500">—</div>`;
+			const recents_ui = book.recents.map(trade_id => {
+				if (trade_id == null) return html`<div class="text-xs text-slate-500">—</div>`;
 				const t = book.trades.get(trade_id);
 				if (!t) return html`<div class="text-xs text-slate-500">—</div>`;
 				if (t.sell_id == null) return html`<div class="text-xs text-slate-500">—</div>`;
 				const is_buy = t.sell_id < t.buy_id;
 				const amount = base_t.ext.clean(t.sell_base);
-				const price = quote_t.ext.clean(Number(t.buy_quote) / Number(t.sell_base));
+				const price = quote_t.ext.price(t.buy_quote, t.sell_base);
 				if (!last_trade_price) last_trade_price = price;
 				const timestamp = nano2date(t.created_at);
 				return html`
@@ -116,26 +117,30 @@ export default class Market {
 	<div class="text-slate-500 ml-2">${timestamp.toLocaleTimeString()}</div>
 </div>`;
 			});
-			const asks = book.asks.map(price => {
-				if (price.level == 0n) return html`<div class="text-xs text-slate-500">—</div>`;
-				const price_lvl = quote_t.ext.clean(price.level);
-				const amount = base_t.ext.clean(price.base.initial - price.base.filled - price.base.locked);
-				return html`
+			let asks = [];
+			for (const price of book.asks) if (price.curr_level > 0n) {
+				const price_lvl = quote_t.ext.clean(price.curr_level);
+				const amount = price.base.initial - price.base.filled - price.base.locked;
+				if (amount > 0n) asks.push(html`
 <div class="flex justify-between items-center text-xs text-slate-300">
-	<div class="font-medium text-rose-400">${price_lvl }</div>
-	<div class="text-slate-400">${amount}</div>
-</div>`;
-			}).reverse();
-			const bids = book.bids.map(price => {
-				if (price.level == 0n) return html`<div class="text-xs text-slate-500">—</div>`;
-				const price_lvl = quote_t.ext.clean(price.level);
-				const amount = base_t.ext.clean(price.base.initial - price.base.filled - price.base.locked);
-				return html`
+	<div class="font-medium text-rose-400">${price_lvl}</div>
+	<div class="text-slate-400">${base_t.ext.clean(amount)}</div>
+</div>`);
+			};
+			for (let i = asks.length; i < Book.MAX_PRICES; i++) asks.push(html`<div class="text-xs text-slate-500">—</div>`);
+			asks.reverse();
+			
+			let bids = [];
+			for (const price of book.bids) if (price.curr_level > 0n) {
+				const price_lvl = quote_t.ext.clean(price.curr_level);
+				const amount = price.base.initial - price.base.filled - price.base.locked;
+				if (amount > 0n) bids.push(html`
 <div class="flex justify-between items-center text-xs text-slate-300">
-	<div class="font-medium text-emerald-400">${price_lvl }</div>
-	<div class="text-slate-400">${amount}</div>
-</div>`;
-			});
+	<div class="font-medium text-emerald-400">${price_lvl}</div>
+	<div class="text-slate-400">${base_t.ext.clean(amount)}</div>
+</div>`);
+			};
+			for (let i = bids.length; i < Book.MAX_PRICES; i++) bids.push(html`<div class="text-xs text-slate-500">—</div>`);
 
 			let opened_orders = html`<div class="text-slate-400">Connect your wallet to see your orders</div>`;
 			if (this.vault.wallet.get().principal) {
@@ -181,7 +186,7 @@ export default class Market {
 					<div class="grid grid-cols-1 md:grid-cols-12 gap-3">
 						<div class="md:col-span-3 bg-slate-800/30 ring-1 ring-slate-700 rounded-md p-2 text-xs min-h-0 min-w-0">
 							<div class="font-medium text-slate-300 mb-2">Recent Trades</div>
-							<div class="flex flex-col gap-1 max-h-72 overflow-y-auto pr-1">${recent_trades}</div>
+							<div class="flex flex-col gap-1 max-h-72 overflow-y-auto pr-1">${recents_ui}</div>
 						</div>
 						<div class="md:col-span-6 bg-slate-800/30 ring-1 ring-slate-700 rounded-md p-2 text-xs min-h-0 min-w-0">
 							<div class="grid grid-cols-1 gap-2">

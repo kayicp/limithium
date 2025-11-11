@@ -30,6 +30,12 @@ import Text "mo:base/Text";
 import Debug "mo:base/Debug";
 import Cycles "mo:core/Cycles";
 
+/*
+  todo:
+  - review
+  - mine rewards
+*/
+
 shared (install) persistent actor class Canister(
   deploy : {
     #Init : {
@@ -817,35 +823,16 @@ shared (install) persistent actor class Canister(
 
     for ((oid, o) in RBTree.entries(refundables)) {
       orders := RBTree.insert(orders, Nat.compare, oid, o.data);
-      if (o.data.is_buy) {
-        var price = Book.getLevel(buy_book, o.data.price);
-        buy_book := Book.saveLevel(buy_book, o.data.price, price);
-      } else {
-        var price = Book.getLevel(sell_book, o.data.price);
-        sell_book := Book.saveLevel(sell_book, o.data.price, price);
-      };
     };
     user := Book.saveSubaccount(user, sub, subacc);
     user := saveUser(caller, user);
 
     func unlock<T>(t : T) : T {
-      user := getUser(caller);
-      subacc := Book.getSubaccount(user, sub);
       for ((oid, o) in RBTree.entries(refundables)) {
-        if (o.data.is_buy) {
-          var pr = Book.getLevel(buy_book, o.data.price);
-          buy_book := Book.saveLevel(buy_book, o.data.price, pr);
-          var o_quote = o.data.base.locked * o.data.price / env.quote_power;
-        } else {
-          var pr = Book.getLevel(sell_book, o.data.price);
-          sell_book := Book.saveLevel(sell_book, o.data.price, pr);
-        };
         var order = Book.unlockOrder(o.data, o.data.base.locked);
         order := { order with closed = null };
         orders := RBTree.insert(orders, Nat.compare, oid, order);
       };
-      user := Book.saveSubaccount(user, sub, subacc);
-      user := saveUser(caller, user);
       t;
     };
 
@@ -1517,10 +1504,6 @@ shared (install) persistent actor class Canister(
           if (min_side) next_buy_o := true else next_sell_o := true;
           continue timing;
         };
-        var sell_u = getUser(sell_o.owner);
-        var buy_u = getUser(buy_o.owner);
-        var sell_sub = Book.getSubaccount(sell_u, sell_o.sub);
-        var buy_sub = Book.getSubaccount(buy_u, buy_o.sub);
         sell_o := Book.lockOrder(sell_o, min_base);
         buy_o := Book.lockOrder(buy_o, min_base);
 
@@ -1529,10 +1512,6 @@ shared (install) persistent actor class Canister(
           orders := RBTree.insert(orders, Nat.compare, buy_id, buy_o);
           sell_book := Book.saveLevel(sell_book, sell_p, sell_lvl);
           buy_book := Book.saveLevel(buy_book, buy_p, buy_lvl);
-          sell_u := Book.saveSubaccount(sell_u, sell_o.sub, sell_sub);
-          sell_u := saveUser(sell_o.owner, sell_u);
-          buy_u := Book.saveSubaccount(buy_u, buy_o.sub, buy_sub);
-          buy_u := saveUser(buy_o.owner, buy_u);
         };
         saveMatch();
 
@@ -1578,12 +1557,6 @@ shared (install) persistent actor class Canister(
         func unlockMatch() {
           sell_o := Book.unlockOrder(sell_o, amt);
           buy_o := Book.unlockOrder(buy_o, amt);
-          sell_lvl := Book.getLevel(sell_book, sell_p);
-          buy_lvl := Book.getLevel(buy_book, buy_p);
-          sell_u := getUser(sell_o.owner);
-          sell_sub := Book.getSubaccount(sell_u, sell_o.sub);
-          buy_u := getUser(buy_o.owner);
-          buy_sub := Book.getSubaccount(buy_u, buy_o.sub);
         };
         let exec_ids = switch (await env.vault.vault_execute(instruction_blocks)) {
           case (#Err err) {
@@ -1650,8 +1623,6 @@ shared (install) persistent actor class Canister(
     let account = { owner = o.owner; subaccount = Subaccount.opt(o.sub) };
     let unlock = { account; action = #Unlock };
     var lvl = _lvl;
-    var user = getUser(o.owner);
-    var subacc = Book.getSubaccount(user, o.sub);
     let (instruction) = if (o.is_buy) {
       buy_book := Book.saveLevel(buy_book, o.price, lvl);
       { unlock with token = env.quote_token_id; amount = unfilled_q };
@@ -1659,24 +1630,11 @@ shared (install) persistent actor class Canister(
       sell_book := Book.saveLevel(sell_book, o.price, lvl);
       { unlock with token = env.base_token_id; amount = unfilled };
     };
-    user := Book.saveSubaccount(user, o.sub, subacc);
-    user := saveUser(o.owner, user);
 
     func unlockX<T>(t : T) : T {
-      user := getUser(caller);
-      subacc := Book.getSubaccount(user, sub);
-      if (o.is_buy) {
-        lvl := Book.getLevel(buy_book, o.price);
-        buy_book := Book.saveLevel(buy_book, o.price, lvl);
-      } else {
-        lvl := Book.getLevel(sell_book, o.price);
-        sell_book := Book.saveLevel(sell_book, o.price, lvl);
-      };
       o := Book.unlockOrder(o, unfilled);
       o := { o with closed = null };
       orders := RBTree.insert(orders, Nat.compare, oid, o);
-      user := Book.saveSubaccount(user, sub, subacc);
-      user := saveUser(o.owner, user);
       t;
     };
     let user_bals = await env.vault.vault_locked_balances_of([instruction]);
@@ -1686,8 +1644,8 @@ shared (install) persistent actor class Canister(
       case (#Err err) return unlockX(#Err(#CloseFailed { order = oid; instruction_blocks = [[instruction]]; error = err }));
       case (#Ok ok) ok[0];
     };
-    user := getUser(caller);
-    subacc := Book.getSubaccount(user, sub);
+    var user = getUser(caller);
+    var subacc = Book.getSubaccount(user, sub);
     let val = if (o.is_buy) {
       lvl := Book.getLevel(buy_book, o.price);
       lvl := Book.levelDelOrder(lvl, oid);

@@ -8,12 +8,9 @@ import PubSub from '../../util/js/pubsub';
 import { Principal } from '@dfinity/principal';
 
 /*
-  6AF4AE green
-  F68701 orange
-  E01201 red
+  todo:
+  - fix limit form, show available balance
 */
-
-console.log('env.dfx_net', process.env.DFX_NETWORK);
 
 Principal.prototype.toString = function () {
   return this.toText();
@@ -55,10 +52,10 @@ function _render() {
       <header class="flex items-center gap-2 p-2 bg-slate-900 border-b border-slate-800 sticky top-0 z-10">
         <button
           class="inline-flex items-center px-2 py-1 text-xs rounded-md font-medium bg-slate-800 hover:bg-slate-700 text-slate-100 ring-1 ring-slate-700"
-          @click=${() => { 
-            location.pathname = '/'; 
+          @click=${() => {
             history.pushState({}, '', '/'); 
-            _render(); 
+            window.dispatchEvent(new PopStateEvent('popstate'));
+            _render();
           }}>
           Limithium
         </button>

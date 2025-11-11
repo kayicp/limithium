@@ -95,6 +95,11 @@ class Token {
     return BigInt(Math.round(res));
   }
 
+  price(quote, base) {
+    const res = this.raw(Number(quote) / Number(base));
+    return this.clean(res);
+  }
+
   async approve(amt) {
     const user = await genActor(idlFactory, this.id, this.wallet.get().agent);
     return user.icrc2_approve({
@@ -112,6 +117,17 @@ class Token {
     })
   }
 
+  async transfer(amt, to_p) {
+    const user = await genActor(idlFactory, this.id, this.wallet.get().agent);
+    return user.icrc1_transfer({
+      amount: amt,
+      to: { owner: to_p, subaccount: [] },
+      fee: [this.fee],
+      memo: [],
+      from_subaccount : [],
+      created_at_time : [],
+    })
+  }
 }
 
 export default Token;

@@ -19,6 +19,9 @@ function equalMaps(map1, map2) {
 }
 
 class Book {
+  static MAX_PRICES = 6;
+  static MAX_TRADES = 14;
+
   wallet = null;
   anon = null;
   id = null;
@@ -41,11 +44,11 @@ class Book {
   user_buy_lvls = new Map();
   user_sell_lvls = new Map();
 
-  asks = [];
+  asks = []; 
   bids = [];
   new_oids = [];
 
-  recents = [];
+  recents = Array.from({ length : Book.MAX_TRADES }, () => null);
   new_tids = [];
 
   form = {
@@ -61,7 +64,6 @@ class Book {
     this.wallet = wallet;
     this.pubsub = wallet.pubsub;
 
-    this.recents = Array.from({ length : 12 }, () => null);
     this.#init();
   }
 
@@ -128,10 +130,10 @@ class Book {
     while (true) {
       try {
         let has_change = false;
-        const prices = await this.anon.book_ask_prices([], [this.asks.length]);
-        for (let i = 0; i < this.asks.length; i++) {
+        const prices = await this.anon.book_ask_prices([], [Book.MAX_PRICES]);
+        for (let i = 0; i < Book.MAX_PRICES; i++) {
           const price = prices[i] ?? 0n;
-          if (price != this.asks[i].level) {
+          if (price != this.asks[i].curr_level) {
             has_change = true;
             this.asks[i].changeLevel(price);
           };
@@ -154,10 +156,10 @@ class Book {
     while (true) {
       try {
         let has_change = false;
-        const prices = await this.anon.book_bid_prices([], [this.bids.length]);
-        for (let i = 0; i < this.bids.length; i++) {
+        const prices = await this.anon.book_bid_prices([], [Book.MAX_PRICES]);
+        for (let i = 0; i < Book.MAX_PRICES; i++) {
           const price = prices[i] ?? 0n;
-          if (price != this.bids[i].level) {
+          if (price != this.bids[i].curr_level) {
             has_change = true;
             this.bids[i].changeLevel(price);
           };
@@ -519,7 +521,7 @@ class Book {
     const price = !o?.price? '—' : quote_t.ext.clean(o.price); 
     const amount = !o?.price? '—' : base_t.ext.clean(o.base.initial);
     const filled = !o?.price? '—' : base_t.ext.clean(o.base.filled);
-    const timestamp = !o?.created_at? '—' : nano2date(o.created_at);
+    const timestamp = !o?.created_at? '—' : nano2date(o.created_at).toLocaleTimeString();
     const cancelable = o?.price && !o?.closed_at;
 
     return html`
@@ -539,8 +541,8 @@ class Book {
         <div class="flex-shrink-0">
           <button
             class="px-2 py-1 text-xs rounded-md bg-slate-600 hover:bg-slate-500 text-white"
-            @click=${() => o.show(base_t, quote_t)}
-          >${o.trades_ui.length? 'Hide Trades' : 'Show Trades'}</button>
+            @click=${() => o.showTrades()}
+          >${o.show_trades? 'Hide Trades' : 'Show Trades'}</button>
         </div>` : html``}
       ${cancelable ? html`
         <div class="flex-shrink-0">
@@ -551,9 +553,9 @@ class Book {
           >Cancel</button>
         </div>` : html``}
     </div>
-    ${o?.trades_ui.length? html`
+    ${o?.show_trades? html`
       <div class="mt-2 space-y-2 pl-2">
-        ${o.trades_ui}
+        ${o.drawTrades(base_t, quote_t)}
       </div>` 
       : html``}
   `;

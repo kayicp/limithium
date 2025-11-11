@@ -48,10 +48,11 @@ for (const [tid, t] of this.vault.tokens) {
             class="w-full sm:w-auto bg-slate-800 text-slate-100 text-xs px-2 py-1 rounded-md ring-1 ring-slate-700"
             ?disabled=${t.busy}
             .value=${t.operation ?? 'deposit'}
-            @change=${(e) => { t.operation = e.target.value; }}
+            @change=${(e) => t.operation = e.target.value}
           >
-            <option value="deposit">Deposit</option>
-            <option value="withdraw">Withdraw</option>
+            <option value="deposit">Deposit into the Vault</option>
+            <option value="withdraw">Withdraw from the Vault</option>
+            <option value="transfer">Transfer to another Wallet</option>
           </select>
 
           <input
@@ -60,7 +61,7 @@ for (const [tid, t] of this.vault.tokens) {
             inputmode="decimal"
             pattern="\\d+(?:\\.\\d{0,${Number(t.ext.decimals)}})?"
             placeholder="Amount"
-            .value=${t.amount ?? ''}
+            .value=${t.amount}
             ?disabled=${t.busy}
             @keydown=${(e) => {
               if (['e','E','+','-'].includes(e.key)) { e.preventDefault(); return; }
@@ -81,6 +82,14 @@ for (const [tid, t] of this.vault.tokens) {
               }
             }}
           >
+          ${t.operation == 'transfer'? html`<input
+            class="flex-1 min-w-0 w-full bg-slate-800 text-slate-100 text-xs px-2 py-1 rounded-md ring-1 ring-slate-700 placeholder:text-slate-500"
+            type="text"
+            placeholder="Receiver's Principal"
+            .value=${t.receiver}
+            ?disabled=${t.busy}
+            @input=${(e) => t.receiver = e.target.value}
+            >` : html``}
         </div>
 
         <div class="flex items-center gap-2">
@@ -90,10 +99,13 @@ for (const [tid, t] of this.vault.tokens) {
             ?disabled=${t.busy || !t.amount}
             @click=${() => {
               if (!t.amount) return;
-              if ((t.operation ?? 'deposit') === 'deposit') {
+              const opr = t.operation ?? 'deposit';
+              if (opr == 'deposit') {
                 this.vault.deposit(t);
-              } else {
+              } else if (opr == 'withdraw') {
                 this.vault.withdraw(t);
+              } else {
+                this.vault.transfer(t);
               }
             }}
           >Confirm</button>
