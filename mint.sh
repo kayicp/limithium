@@ -1,4 +1,4 @@
-export RECEIVER="cor7t-2qkcq-ddumn-ncgfh-hwxch-go7bk-dczl7-km6e2-2y76i-drdf7-oqe"
+export RECEIVER="nad4p-efx5y-4qkfk-huzp7-ghay2-tpmvc-oys3z-c53r7-ez64f-cz6yl-xqe"
 
 #!/bin/bash
 

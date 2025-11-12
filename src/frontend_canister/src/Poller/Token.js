@@ -16,8 +16,8 @@ class Token {
   power = null;
   fee = null;
 
-  balance = 0;
-  allowance = 0;
+  balance = 0n;
+  allowance = 0n;
   expires_at = null;
 
   constructor(token_id, vault_id, wallet) {

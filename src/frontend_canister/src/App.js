@@ -6,10 +6,14 @@ import Balances from './Element/Balances';
 import Market from './Element/Market';
 import PubSub from '../../util/js/pubsub';
 import { Principal } from '@dfinity/principal';
+import { renderNotifications } from '../../util/js/notification';
 
 /*
   todo:
+  - move notifications to App.js (here)
   - fix limit form, show available balance
+  - logo
+  - use ckbtc as quote
 */
 
 Principal.prototype.toString = function () {
@@ -70,13 +74,15 @@ function _render() {
         </div>
       </header>
 
-      <main class="p-3 max-w-6xl mx-auto flex-1">
+      <main class="p-3 max-w-6xl mx-auto flex-1 relative">
         ${page}
       </main>
 
       <footer class="p-2 text-xs text-slate-400">
         © Limithium
       </footer>
+
+      ${renderNotifications()}
     </div>
   `;
   render(body, document.getElementById('root'));

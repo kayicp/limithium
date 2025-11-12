@@ -4,7 +4,7 @@ import Book from './Book';
 import { wait, retry } from '../../../util/js/wait';
 import { genActor } from '../../../util/js/actor';
 import { nano2date } from '../../../util/js/bigint';
-import Principal from '../../../util/js/principal';
+import { Principal } from '@dfinity/principal';
 
 class Vault {
   pubsub = null;
@@ -124,13 +124,14 @@ class Vault {
     const amt = t.ext.raw(t.amount);
     if (amt == 0n) { // todo: check if lower than withdrawal fee
       const err = new Error(`approve deposit ${amt} ${t.ext.symbol}: amount is zero`);
+      window.showPopup({ type: 'error', title: 'Amount Input', message: 'Must be larger than 0.', actions: [{ label: 'OK', onClick: () => {} }] })
       return this.#render(err);
     }
 
     t.busy = true;
     this.#refresh();
 
-    if (amt < t.ext.allowance || (t.ext.expires_at && nano2date(t.ext.expires_at))) {
+    if (amt < t.ext.allowance || (t.ext.expires_at && nano2date(t.ext.expires_at) < new Date())) {
       try {
         const res = await t.ext.approve(amt);
         if ('Err' in res) {

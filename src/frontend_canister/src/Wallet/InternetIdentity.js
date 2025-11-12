@@ -1,7 +1,7 @@
 import { AuthClient } from "@dfinity/auth-client";
 import { HttpAgent } from '@dfinity/agent';
-import Principal from '../../../util/js/principal';
 import { AccountIdentifier } from '@dfinity/ledger-icp'
+import { shortPrincipal } from "../../../util/js/principal";
 
 const network = process.env.DFX_NETWORK;
 const identityProvider =
@@ -103,9 +103,12 @@ class InternetIdentity {
 				this.principal = await identity.getPrincipal();
 				this.accountid = AccountIdentifier.fromPrincipal({ principal: this.principal }).toHex();
 				console.log('p\n', this.principal.toText(), '\na\n', this.accountid);
+				window.notifyToast({ type: 'success', title: 'Connected', message: `Welcome, ${shortPrincipal(this.principal)}`, timeout: 5000 });
 				this.pubsub.emit('refresh');
 				resolve();
 			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				window.notifyToast({ type: 'error', title: 'Connect Failed', message, timeout: 5000 });
 				reject(err);
 			}
 		});
@@ -120,9 +123,12 @@ class InternetIdentity {
 				this.agent = null;
 				this.principal = null;
 				this.accountid = null;
+				window.notifyToast({ type: 'success', title: 'Disconnected', message: `You are now Anonymous`, timeout: 5000 });
 				this.#render();
 				resolve();
 			} catch (cause) {
+				const message = cause instanceof Error ? cause.message : String(cause);
+				window.notifyToast({ type: 'error', title: 'Disconnect Failed', message, timeout: 5000 });
 				const err = new Error('logout', { cause });
 				this.#render(false, err)
 				reject(err);
