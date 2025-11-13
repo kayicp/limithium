@@ -7,7 +7,6 @@ import { nano2date } from '../../../util/js/bigint';
 import { Principal } from '@dfinity/principal';
 
 class Vault {
-  pubsub = null;
   err = null;
 
   wallet = null;
@@ -20,7 +19,8 @@ class Vault {
 
   constructor(wallet) {
     this.wallet = wallet;
-    this.pubsub = wallet.pubsub;
+    this.notif = wallet.notif;
+    this.pubsub = wallet.notif.pubsub;
     this.#init();
   }
 
@@ -44,8 +44,7 @@ class Vault {
       }
       this.#render();
     } catch (cause) {
-      const err = new Error('get books', { cause });
-      return this.#render(err);
+      return this.notif.errorToast('Vault: Get Executors', cause);
     }
 
     try {
@@ -64,8 +63,7 @@ class Vault {
       }
       this.#render();
     } catch (cause) {
-      const err = new Error('get tokens:', { cause });
-      return this.#render(err);
+      return this.notif.errorToast('Vault: Get Tokens', cause);
     }
   
     const t_ids = [];
@@ -88,8 +86,7 @@ class Vault {
       }
       this.#render();
     } catch (cause) {
-      const err = new Error('get withdrawal_fees:', { cause });
-      return this.#render(err);
+      return this.notif.errorToast('Vault: Get Withdrawal Fees', cause);
     }
 
     let delay = 1000;
@@ -112,8 +109,7 @@ class Vault {
         delay = retry(has_new, delay);
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error('get unlocked_balances:', { cause });
-        this.#render(err);
+        this.notif.errorToast('Vault: Get Unlocked Balances', cause);
       }
 
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
@@ -122,12 +118,9 @@ class Vault {
 
   async deposit(t){
     const amt = t.ext.raw(t.amount);
-    if (amt == 0n) { // todo: check if lower than withdrawal fee
-      const err = new Error(`approve deposit ${amt} ${t.ext.symbol}: amount is zero`);
-      window.showPopup({ type: 'error', title: 'Amount Input', message: 'Must be larger than 0.', actions: [{ label: 'OK', onClick: () => {} }] })
-      return this.#render(err);
+    if (amt < 1n) { // todo: check if lower than withdrawal fee
+      return this.notif.errorPopup(`Amount input of ${t.ext.symbol} token`, 'Must be larger than 0.')
     }
-
     t.busy = true;
     this.#refresh();
 
@@ -135,14 +128,13 @@ class Vault {
       try {
         const res = await t.ext.approve(amt);
         if ('Err' in res) {
-          const err = new Error(`post approve deposit ${amt} ${t.ext.symbol}: ${JSON.stringify(res.Err)}`);
           t.busy = false;
-          return this.#render(err);
+          return this.notif.errorPopup(`${t.ext.symbol} token post approval failed`, JSON.stringify(res.Err))
         }
+        this.notif.successToast(`${t.ext.symbol} token approval success`, `Block: ${res.Ok}`)
       } catch (cause) {
-        const err = new Error(`approve deposit ${amt} ${t.ext.symbol}`, { cause });
         t.busy = false;
-        return this.#render(err);
+        return this.notif.errorPopup(`${t.ext.symbol} token approval failed`, cause)
       }
     };
 
@@ -158,23 +150,20 @@ class Vault {
       });
       t.busy = false;
       if ('Err' in res) {
-        const err = new Error(`post deposit ${amt} ${t.ext.symbol}: ${JSON.stringify(res.Err)}`);
-        return this.#render(err);
+        return this.notif.errorPopup(`Post deposit ${t.ext.symbol} failed`, JSON.stringify(res.Err))
       }
       t.amount = '';
-      this.#refresh();
+      this.notif.successToast(`Deposit ${t.ext.symbol} success`, `Block: ${res.Ok}`)
     } catch (cause) {
-      const err = new Error(`deposit ${amt} ${t.ext.symbol}`, { cause });
       t.busy = false;
-      return this.#render(err);
+      return this.notif.errorPopup(`Deposit ${t.ext.symbol} failed`, cause)
     }
   }
 
   async withdraw(t) {
     const amt = t.ext.raw(t.amount);
-    if (amt == 0n) { // todo: check if lower than withdrawal fee
-      const err = new Error(`withdraw ${amt} ${t.ext.symbol}: amount is zero`);
-      return this.#render(err);
+    if (amt < 1n) { // todo: check if lower than withdrawal fee
+      return this.notif.errorPopup(`Amount input of ${t.ext.symbol} token`, 'Must be larger than 0.')
     }
 
     t.busy = true;
@@ -191,37 +180,32 @@ class Vault {
       });
       t.busy = false;
       if ('Err' in res) {
-        const err = new Error(`post withdraw ${amt} ${t.ext.symbol}: ${JSON.stringify(res.Err)}`);
-        return this.#render(err);
+        return this.notif.errorPopup(`Post withdraw ${t.ext.symbol} failed`, JSON.stringify(res.Err))
       }
       t.amount = '';
-      this.#refresh();
+      this.notif.successToast(`Withdraw ${t.ext.symbol} success`, `Block: ${res.Ok}`)
     } catch (cause) {
-      const err = new Error(`withdraw ${amt} ${t.ext.symbol}`, { cause });
       t.busy = false;
-      return this.#render(err);
+      return this.notif.errorPopup(`Withdraw ${t.ext.symbol} failed`, cause)
     }
   }
 
   async transfer(t) {
     const amt = t.ext.raw(t.amount);
-    if (amt == 0n) { // todo: check if lower than withdrawal fee
-      const err = new Error(`transfer: amount is zero`);
-      return this.#render(err);
+    if (amt < 1n) {
+      return this.notif.errorPopup(`Amount input of ${t.ext.symbol} token`, 'Must be larger than 0.')
     }
 
     const rcvr = t.receiver.trim();
     if (rcvr.length == 0) {
-      const err = new Error(`transfer: receiver is empty`);
-      return this.#render(err);
+      return this.notif.errorPopup(`Receiver input of ${t.ext.symbol} token`, 'Must be a principal ID')
     }
 
     let rcvr_p = null;
     try {
       rcvr_p = Principal.fromText(rcvr);
     } catch (cause) {
-      const err = new Error(`transfer: receiver is not a principal`);
-      return this.#render(err);
+      return this.notif.errorPopup(`Receiver input of ${t.ext.symbol} token`, cause)
     }
 
     t.busy = true;
@@ -230,16 +214,14 @@ class Vault {
       const res = await t.ext.transfer(amt, rcvr_p);
       t.busy = false;
       if ('Err' in res) {
-        const err = new Error(`post transfer ${amt} ${t.ext.symbol} to ${rcvr}: ${JSON.stringify(res.Err)}`);
-        return this.#render(err);
+        return this.notif.errorPopup(`Post transfer ${t.ext.symbol} failed`, JSON.stringify(res.Err))
       }
       t.amount = '';
       t.receiver = '';
-      this.#refresh();
+      this.notif.successToast(`Transfer ${t.ext.symbol} success`, `Block: ${res.Ok}`)
     } catch (cause) {
-      const err = new Error(`transfer ${amt} ${t.ext.symbol} to ${rcvr}`, { cause });
       t.busy = false;
-      this.#render(err);
+      return this.notif.errorPopup(`Transfer ${t.ext.symbol} failed`, cause)
     }
   }
 }

@@ -24,7 +24,7 @@ class Token {
     this.id = token_id;
     this.vault_id = vault_id;
     this.wallet = wallet;
-    this.pubsub = wallet.pubsub;
+    this.pubsub = wallet.notif.pubsub;
     this.#init();
   }
 

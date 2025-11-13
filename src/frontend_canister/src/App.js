@@ -2,6 +2,7 @@ import { html, render } from 'lit-html';
 import logo from './logo2.svg';
 import Wallet from './Wallet/Wallet';
 import Vault from './Poller/Vault';
+import Notif from './Element/Notification';
 import Balances from './Element/Balances';
 import Market from './Element/Market';
 import PubSub from '../../util/js/pubsub';
@@ -32,7 +33,8 @@ Uint8Array.prototype.toJSON = function () {
 }
 
 const pubsub = new PubSub();
-const wallet = new Wallet(pubsub);
+const notif = new Notif(pubsub);
+const wallet = new Wallet(notif);
 const vault = new Vault(wallet);
 const balances = new Balances(vault);
 const market = new Market(vault);

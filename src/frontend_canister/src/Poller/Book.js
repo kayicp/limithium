@@ -5,6 +5,7 @@ import Trade from './Trade';
 import { wait, retry } from '../../../util/js/wait';
 import { genActor } from '../../../util/js/actor';
 import { nano2date } from '../../../util/js/bigint';
+import { shortPrincipal } from '../../../util/js/principal';
 import { html } from 'lit-html';
 
 function equalMaps(map1, map2) {
@@ -62,7 +63,8 @@ class Book {
   constructor(book_id, wallet) {
     this.id = book_id;
     this.wallet = wallet;
-    this.pubsub = wallet.pubsub;
+    this.notif = wallet.notif;
+    this.pubsub = wallet.notif.pubsub;
 
     this.#init();
   }
@@ -108,8 +110,7 @@ class Book {
       this.close_quote = close_quote;
       this.close_base = close_base;
     } catch (cause) {
-      const err = new Error(`token meta:`, { cause }); 
-      return this.#render(err);
+      return this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get metadata failed`, cause);
     }
     this.#initAsks();
     this.#initBids();
@@ -142,8 +143,7 @@ class Book {
         delay = retry(has_change, delay);
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error('ask prices:', { cause });
-        this.#render(err);
+        this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get ask prices failed`, cause);
       }
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
@@ -168,8 +168,7 @@ class Book {
         delay = retry(has_change, delay);
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error('bid prices:', { cause });
-        this.#render(err);
+        this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get bid prices failed`, cause);
       }
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
@@ -205,8 +204,7 @@ class Book {
         this.#render();
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error(`user's buy levels:`, { cause });
-        this.#render(err);
+        this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get user's buy levels failed`, cause);
       }
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
@@ -242,8 +240,7 @@ class Book {
         this.#render();
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error("user's sell levels", { cause });
-        this.#render(err);
+        this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get user's sell levels failed`, cause);
       }
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
@@ -281,8 +278,7 @@ class Book {
         if (has_new) this.#render();
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error("user's buys", { cause });
-        this.#render(err);
+        this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get user's buy orders failed`, cause);
       }
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     };
@@ -321,8 +317,7 @@ class Book {
         if (has_new) this.#render();
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error("user's sells", { cause });
-        this.#render(err);
+        this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get user's sell orders failed`, cause);
       }
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
@@ -371,8 +366,7 @@ class Book {
         this.#render();
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error("get orders", { cause });
-        this.#render(err);
+        this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get orders' details failed`, cause);
       }
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
@@ -400,8 +394,7 @@ class Book {
         if (has_change) this.#render();
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error("recent trades", { cause });
-        this.#render(err);
+        this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get recent trades failed`, cause);
       }
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     };
@@ -466,8 +459,7 @@ class Book {
         this.#render();  
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error("get trades", { cause });
-        this.#render(err);
+        this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get trades' details failed`, cause);
       }
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     };
@@ -509,8 +501,7 @@ class Book {
         delay = retry(has_change, delay);
       } catch (cause) {
         delay = retry(false, delay);
-        const err = new Error("update orders", { cause });
-        this.#render(err);
+        this.notif.errorToast(`Book (${shortPrincipal(this.id)}): Get orders' updates failed`, cause);
       }
       if (await wait(delay, this.pubsub) == 'refresh') delay = 1000;
     }
@@ -580,16 +571,14 @@ class Book {
       });
       this.form.busy = false;
       if ('Err' in res) {
-        const err = new Error(`post open ${base_t.ext.symbol}/${quote_t.ext.symbol} ${JSON.stringify(this.form)}: ${JSON.stringify(res.Err)}`);
-        return this.#render(err);
+        return this.notif.errorPopup(`Post open ${base_t.ext.symbol}/${quote_t.ext.symbol} order failed`, JSON.stringify(res.Err));
       };
-      this.form.base = '0';
-      this.form.quote = '0';
-      this.#refresh();
+      this.form.base = '';
+      this.form.quote = '';
+      return this.notif.successToast(`Open ${base_t.ext.symbol}/${quote_t.ext.symbol} order success`, `Order ID: ${res.Ok[0]}`)
     } catch (cause) {
       this.form.busy = false;
-      const err = new Error(`open ${base_t.ext.symbol}/${quote_t.ext.symbol} ${JSON.stringify(this.form)}`, { cause });
-      return this.#render(err);
+      return this.notif.errorPopup(`Open ${base_t.ext.symbol}/${quote_t.ext.symbol} order failed`, cause);
     }
   }
 

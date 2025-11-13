@@ -3,13 +3,12 @@ import { html } from 'lit-html';
 
 class Wallet {
   ii = null;
-  pubsub = null;
   button = null;
 
-  constructor(pubsub) {
-    this.pubsub = pubsub;
-    this.ii = new InternetIdentity(pubsub);
-    this.pubsub.on('render', () => this.render());
+  constructor(notif) {
+    this.ii = new InternetIdentity(notif);
+    this.notif = notif;
+    this.notif.pubsub.on('render', () => this.render());
   }
 
   get() { return this.ii }
@@ -30,12 +29,7 @@ class Wallet {
       <button 
         class="inline-flex items-center px-2 py-1 text-xs rounded-md font-medium bg-slate-800 hover:bg-slate-700 text-slate-100 ring-1 ring-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
         ?disabled=${disabled}
-        @click=${(e) => {
-          e.preventDefault();
-          if (!this.get().principal) {
-            this.get().login();
-          } else this.get().logout();
-        }}>
+        @click=${(e) => this.get().click(e)}>
         ${inner}
       </button>`;
     return this.button;

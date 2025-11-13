@@ -13,23 +13,21 @@ const DAYS_30_NANOS = BigInt(30 * 24 * 60 * 60 * 1000 * 1000 * 1000);
 
 class InternetIdentity {
 	busy = false;
-	err = null;
-	pubsub = null;
 
   ii = null;
 	agent = null;
 	principal = null;
 	accountid = null;
 
-  constructor(pubsub) {
-		this.pubsub = pubsub;
+  constructor(notif) {
+		this.notif = notif;
 		this.#init();
   }
 
 	#render(busy = false, err = null) {
 		this.busy = busy;
-		this.err = err;
-		this.pubsub.emit('render');
+		if (err) console.error(err);
+		this.notif.pubsub.emit('render');
 	}
 
   async #init() {
@@ -37,23 +35,23 @@ class InternetIdentity {
     if (this.ii == null) try {
       this.ii = await AuthClient.create();
     } catch (cause) {
-			const err = new Error('init client', { cause });
-			return this.#render(false, err);
+			this.busy = false;
+			return this.notif.errorToast('Init Client Creation Failed', cause);
     }
     try {
       if (await this.ii.isAuthenticated()) {
 				// proceed to #authed
 			} else return this.#render();
     } catch (cause) {
-			const err = new Error('init auth', { cause });
-			return this.#render(false, err);
+			this.busy = false;
+			return this.notif.errorToast('Init IsConnected Failed', cause);
     }
 		try {
 			await this.#authed();
 			this.#render(false);
 		} catch (cause) {
-			const err = new Error('init login', { cause });
-			return this.#render(false, err);
+			this.busy = false;
+			return this.notif.errorToast('Auto Connect Failed', cause);
 		}
   }
 
@@ -63,20 +61,19 @@ class InternetIdentity {
 			if (this.ii == null) try {
 				this.ii = await AuthClient.create();
 			} catch (cause) {
-				const err = new Error('login client', { cause });
-				this.#render(false, err);
-				return reject(err);
+				this.busy = false;
+				this.notif.errorToast('Client Creation Failed', cause);
+				return reject(cause);
 			}
 			const self = this;
 			async function onSuccess() {
 				try {
 					await self.#authed();
-					self.#render(false);
+					self.notif.successToast('Connected', `Welcome, ${shortPrincipal(self.principal)}`);
 					resolve();
 				} catch (cause) {
-					const err = new Error('login', { cause });
-					this.#render(false, err);
-					reject(err);
+					self.notif.errorToast('Connect Failed', cause);
+					reject(cause);
 				}
 			}
 			try {
@@ -88,9 +85,9 @@ class InternetIdentity {
 					onSuccess,
 				});
 			} catch (cause) {
-				const err = new Error('is auth', { cause });
-				this.#render(false, err);
-				reject(err);
+				this.busy = false;
+				this.notif.errorToast('IsConnected Failed', cause);
+				reject(cause);
 			}
 		});
 	}
@@ -103,12 +100,10 @@ class InternetIdentity {
 				this.principal = await identity.getPrincipal();
 				this.accountid = AccountIdentifier.fromPrincipal({ principal: this.principal }).toHex();
 				console.log('p\n', this.principal.toText(), '\na\n', this.accountid);
-				window.notifyToast({ type: 'success', title: 'Connected', message: `Welcome, ${shortPrincipal(this.principal)}`, timeout: 5000 });
-				this.pubsub.emit('refresh');
+				this.busy = false;
 				resolve();
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				window.notifyToast({ type: 'error', title: 'Connect Failed', message, timeout: 5000 });
+				this.busy = false;
 				reject(err);
 			}
 		});
@@ -123,17 +118,22 @@ class InternetIdentity {
 				this.agent = null;
 				this.principal = null;
 				this.accountid = null;
-				window.notifyToast({ type: 'success', title: 'Disconnected', message: `You are now Anonymous`, timeout: 5000 });
-				this.#render();
+				this.busy = false;
+				this.notif.successToast('Disconnected', `You are now Anonymous`);
 				resolve();
 			} catch (cause) {
-				const message = cause instanceof Error ? cause.message : String(cause);
-				window.notifyToast({ type: 'error', title: 'Disconnect Failed', message, timeout: 5000 });
-				const err = new Error('logout', { cause });
-				this.#render(false, err)
-				reject(err);
+				this.busy = false;
+				this.notif.errorToast('Disconnect Failed', cause);
+				reject(cause);
 			}
 		});
+	}
+
+	click(e) {
+		e.preventDefault();
+		if (!this.principal) {
+			this.login();
+		} else this.logout();
 	}
 }
 

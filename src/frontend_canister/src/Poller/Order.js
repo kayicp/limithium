@@ -28,7 +28,7 @@ class Order {
 		this.trades = trades;
 		this.new_tids = new_tids;
 		this.wallet = wallet;
-		this.pubsub = wallet.pubsub;
+		this.pubsub = wallet.notif.pubsub;
 		this.#init();
 	}
 
